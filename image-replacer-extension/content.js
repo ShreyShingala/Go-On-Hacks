@@ -12,13 +12,12 @@ const KNOWN_FIGURES = [
   { name: "Kamala Harris", pattern: /\b(kamala\s+harris|kamala)\b/i },
   { name: "Elon Musk", pattern: /\b(elon\s+musk|elon)\b/i }
 ];
-const GOAT_IMAGE = "goat.png";
 
 const LEBRONS = ["lebrons/lebron1.png", "lebrons/lebron2.png", "lebrons/lebron3.png", "lebrons/lebron4.png"];
 
 const SUNSHINE_BG = "sunshine.jpg";
 const LEBRON = "lebrontogo.jpg";
-const FADE_TRANSITION_MS = 5000; // 5 seconds fade transition
+const FADE_TRANSITION_MS = 2000; // 2 seconds fade transition
 const INCREASE_OVERALL_SIZE = 1.5;
 const NO_PERSON_FLAG = "no-person-detected";
 let observer = null;
@@ -435,15 +434,14 @@ async function drawFacesOnImage(img, faces) {
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     
     if (faces && faces.length > 0) {
+      const randomLebron = LEBRONS[Math.floor(Math.random() * LEBRONS.length)];
+      console.log('[Image Replacer] Using LeBron image:', randomLebron);
+      
       const overlayImg = await new Promise((resolve, reject) => {
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => resolve(img);
         img.onerror = reject;
-
-        const randomLebron = LEBRONS[Math.floor(Math.random() * LEBRONS.length)];
-        console.log('randomLebron:', randomLebron);
-        
         img.src = chrome.runtime.getURL(randomLebron);
       });
       

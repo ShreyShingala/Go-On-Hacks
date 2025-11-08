@@ -23,7 +23,14 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["goat.png", "sunshine.jpg", "lebrontogo.jpg"],
+      "resources": [
+        "sunshine.jpg", 
+        "lebrontogo.jpg",
+        "lebrons/lebron1.png",
+        "lebrons/lebron2.png",
+        "lebrons/lebron3.png",
+        "lebrons/lebron4.png"
+      ],
       "matches": ["<all_urls>"]
     }
   ],
