@@ -1,621 +1,418 @@
 
 //const PLACEHOLDER_URL = "https://cdn.bap-software.net/2024/02/22165839/testdebug2.jpg";
+const FULL_SCAN_DEBOUNCE_MS = 80;
+const REPLACED_CLASS = "replaced";
+const METRICS_MAX_IMAGES = 3;
+const CLICK_FLUSH_DEBOUNCE_MS = 750;
+const SCROLL_REPORT_THROTTLE_MS = 1500;
+const EVENT_LIMIT = 50;
+const KNOWN_FIGURES = [
+  { name: "Donald Trump", pattern: /\b(donald\s+trump|trump)\b/i },
+  { name: "Joe Biden", pattern: /\b(joe\s+biden|biden)\b/i },
+  { name: "Barack Obama", pattern: /\b(barack\s+obama|obama)\b/i },
+  { name: "Kamala Harris", pattern: /\b(kamala\s+harris|kamala)\b/i },
+  { name: "Elon Musk", pattern: /\b(elon\s+musk|elon)\b/i }
+];
 const GOAT_IMAGE = "goat.png";
 const SUNSHINE_BG = "sunshine.jpg";
 let observer = null;
 let fullScanTimer = null;
-let isScanning = false; // Prevent multiple simultaneous scans
-const FULL_SCAN_DEBOUNCE_MS = 80; // small debounce to batch rapid mutations
-const REPLACED_CLASS = 'replaced';
-const NO_PERSON_FLAG = 'noperson';
-const MIN_PIXEL_AREA = 5000; // skip tiny images (w*h)
-const INCREASE_OVERALL_SIZE = 1.5;
+let clickFlushTimer = null;
+let scrollReportTimer = null;
+let contextBroadcastTimer = null;
 
-// Face detection state
-let faceDetector = null;
-const detectionCache = new Map();
-let downloadsEnabled = true; // Default to enabled
+const seenImageSources = new Set();
+const metricsState = {
+  initialized: false,
+  listenersBound: false,
+  topImages: [],
+  imageMeta: [],
+  maxScrollDepth: 0
+};
 
-/**
- * Check if the current page is displaying a single image file
- */
-function isImagePage() {
-  // Check if the page is just displaying an image file directly
-  const contentType = document.contentType || '';
-  const isImageContentType = contentType.startsWith('image/');
-  
-  // Check if body only contains a single img element
-  const bodyChildren = document.body?.children || [];
-  const hasSingleImage = bodyChildren.length === 1 && bodyChildren[0]?.tagName === 'IMG';
-  
-  return isImageContentType || hasSingleImage;
+let clickBuffer = [];
+
+function normalizeSource(src) {
+  if (!src) return "";
+  const trimmed = String(src).trim();
+  if (!trimmed) return "";
+  try {
+    return new URL(trimmed, window.location.href).href;
+  } catch (err) {
+    return trimmed;
+  }
 }
 
-/**
- * Replace the direct image page with face-detected version
- */
-async function handleDirectImagePage() {
-  if (!isImagePage()) return;
-  
-  const img = document.querySelector('img');
-  if (!img) return;
-  
-  console.log('[Image Replacer] Detected direct image page, processing...');
-  
-  // Wait for image to load
-  if (!img.complete) {
-    await new Promise(resolve => {
-      img.onload = resolve;
-      img.onerror = resolve;
+function sendToBackground(type, payload) {
+  if (!chrome?.runtime?.sendMessage) return;
+  try {
+    chrome.runtime.sendMessage({ type, payload }, () => {
     });
+  } catch (error) {
+    console.warn("[Image Replacer] Failed to send message:", error);
   }
-  
-  // Check for faces and replace
-  const result = await imageContainsFaceCached(img);
-  if (result.hasFace && result.dataUrl) {
-    replaceImageElement(img, result.dataUrl);
-    
-    // Save if downloads enabled
-    if (downloadsEnabled) {
-      console.log('[Image Replacer] Downloads enabled - saving image');
-      try {
-        chrome.runtime.sendMessage({
-          type: 'save-detected-image',
-          dataUrl: result.dataUrl,
-          originalSrc: img.src
-        }, (response) => {
-          if (response && response.success) {
-            console.log('[Image Replacer] Saved detected image to downloads');
-          }
-        });
-      } catch (e) {
-        console.error('[Image Replacer] Error saving image:', e);
+}
+
+function extractNearestText(el) {
+  if (!el) return "";
+  const figure = el.closest("figure");
+  if (figure) {
+    const caption = figure.querySelector("figcaption");
+    if (caption?.innerText) {
+      return caption.innerText.replace(/\s+/g, " ").trim();
+    }
+  }
+
+  const parent = el.closest("article, section, div, span, a") || el.parentElement;
+  if (parent?.innerText) {
+    const text = parent.innerText.replace(/\s+/g, " ").trim();
+    return text.slice(0, 160);
+  }
+
+  return "";
+}
+
+function extractImageMetadata(img) {
+  if (!img) return null;
+
+  const src = normalizeSource(img.currentSrc || img.src || "");
+  if (!src) return null;
+
+  const altCandidates = [
+    img.getAttribute("alt"),
+    img.getAttribute("aria-label"),
+    img.getAttribute("title")
+  ];
+
+  const alt = altCandidates.find((candidate) => typeof candidate === "string" && candidate.trim()) || "";
+  const context = extractNearestText(img);
+
+  return {
+    src,
+    alt: alt.replace(/\s+/g, " ").trim().slice(0, 140),
+    context: context.slice(0, 160)
+  };
+}
+
+function collectInitialImages(limit = METRICS_MAX_IMAGES) {
+  const sources = [];
+  const meta = [];
+
+  Array.from(document.images || []).some((img) => {
+    const entry = extractImageMetadata(img);
+    if (!entry) return false;
+
+    const existingIndex = sources.indexOf(entry.src);
+    if (existingIndex === -1) {
+      sources.push(entry.src);
+      meta.push(entry);
+    } else {
+      const current = meta[existingIndex];
+      meta[existingIndex] = {
+        src: entry.src,
+        alt: entry.alt || current.alt,
+        context: entry.context || current.context
+      };
+    }
+
+    return sources.length >= limit;
+  });
+
+  return { sources, meta };
+}
+
+function detectNamesFromText(texts = []) {
+  const found = new Set();
+  const combined = texts
+    .filter((text) => typeof text === "string")
+    .map((text) => text.toLowerCase());
+
+  KNOWN_FIGURES.forEach(({ name, pattern }) => {
+    if (combined.some((text) => pattern.test(text))) {
+      found.add(name);
+    }
+  });
+
+  return Array.from(found);
+}
+
+function gatherPageContext() {
+  const metaDescription =
+    document.querySelector('meta[name="description"]')?.content?.replace(/\s+/g, " ").trim() || "";
+
+  const headings = Array.from(document.querySelectorAll("h1, h2"))
+    .map((el) => el.innerText.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 5);
+
+  const paragraphs = Array.from(document.querySelectorAll("main p, article p, p"))
+    .map((el) => el.innerText.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
+  const excerpt = paragraphs.join(" ").slice(0, 320);
+  const imageTexts = metricsState.imageMeta.map((entry) => `${entry.alt} ${entry.context}`.trim());
+
+  const detectedNames = detectNamesFromText([
+    document.title || "",
+    metaDescription,
+    headings.join(" "),
+    excerpt,
+    ...imageTexts
+  ]);
+
+  return {
+    pageContext: {
+      description: metaDescription.slice(0, 280),
+      headings,
+      excerpt
+    },
+    detectedNames
+  };
+}
+
+function broadcastPageContext() {
+  const payload = gatherPageContext();
+  sendToBackground("track-page-context", {
+    ...payload,
+    imageMeta: metricsState.imageMeta.slice(0, 5)
+  });
+}
+
+function scheduleContextBroadcast() {
+  if (contextBroadcastTimer) clearTimeout(contextBroadcastTimer);
+  contextBroadcastTimer = setTimeout(() => {
+    contextBroadcastTimer = null;
+    broadcastPageContext();
+  }, 200);
+}
+
+function upsertImageMeta(entry) {
+  if (!entry || !entry.src) return;
+  const index = metricsState.imageMeta.findIndex((item) => item.src === entry.src);
+  if (index >= 0) {
+    metricsState.imageMeta[index] = {
+      ...metricsState.imageMeta[index],
+      ...entry
+    };
+  } else {
+    metricsState.imageMeta.push(entry);
+    if (metricsState.imageMeta.length > 5) {
+      metricsState.imageMeta = metricsState.imageMeta.slice(0, 5);
+    }
+  }
+
+  scheduleContextBroadcast();
+}
+
+function captureInitialPageView() {
+  if (metricsState.initialized) return;
+
+  const { sources, meta } = collectInitialImages(METRICS_MAX_IMAGES);
+  metricsState.topImages = [...sources];
+  metricsState.imageMeta = [...meta];
+  sources.forEach((src) => seenImageSources.add(src));
+
+  metricsState.maxScrollDepth = Math.round(computeScrollDepth());
+
+  sendToBackground("track-page-view", {
+    title: document.title || "",
+    url: window.location.href,
+    topImages: sources,
+    imageMeta: metricsState.imageMeta
+  });
+
+  // Report initial scroll depth
+  sendToBackground("track-scroll-depth", {
+    maxScrollDepth: metricsState.maxScrollDepth
+  });
+
+  broadcastPageContext();
+
+  metricsState.initialized = true;
+}
+
+function scheduleScrollReport() {
+  if (scrollReportTimer) return;
+  scrollReportTimer = setTimeout(() => {
+    scrollReportTimer = null;
+    sendToBackground("track-scroll-depth", {
+      maxScrollDepth: metricsState.maxScrollDepth
+    });
+  }, SCROLL_REPORT_THROTTLE_MS);
+}
+
+function recordTopImage(src, metaOverride = null) {
+  const normalized = normalizeSource(src);
+  if (!normalized) return;
+
+  if (!seenImageSources.has(normalized) && metricsState.topImages.length < METRICS_MAX_IMAGES) {
+    seenImageSources.add(normalized);
+    metricsState.topImages.push(normalized);
+  }
+
+  const entry = metaOverride && metaOverride.src === normalized ? metaOverride : { src: normalized };
+  upsertImageMeta(entry);
+
+  const payload = {};
+  if (metricsState.topImages.length) {
+    payload.topImages = [...metricsState.topImages];
+  }
+  if (metricsState.imageMeta.length) {
+    payload.imageMeta = metricsState.imageMeta.slice(0, 5);
+  }
+  sendToBackground("track-image-sources", payload);
+}
+
+function bufferClickText(text) {
+  if (!text) return;
+  clickBuffer.push(text);
+  if (clickBuffer.length > EVENT_LIMIT) {
+    clickBuffer = clickBuffer.slice(-EVENT_LIMIT);
+  }
+
+  if (clickFlushTimer) {
+    clearTimeout(clickFlushTimer);
+  }
+
+  clickFlushTimer = setTimeout(() => {
+    flushClicks();
+  }, CLICK_FLUSH_DEBOUNCE_MS);
+}
+
+function flushClicks() {
+  if (!clickBuffer.length) return;
+  sendToBackground("track-clicks", { clicks: [...clickBuffer] });
+  clickBuffer = [];
+  if (clickFlushTimer) {
+    clearTimeout(clickFlushTimer);
+    clickFlushTimer = null;
+  }
+}
+
+function extractClickText(event) {
+  if (!event) return "";
+  const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+  const candidates = path.length ? path : [event.target];
+
+  for (const node of candidates) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) continue;
+    const el = node;
+
+    const labelCandidates = [
+      el.innerText,
+      el.getAttribute?.("aria-label"),
+      el.getAttribute?.("alt"),
+      el.getAttribute?.("title"),
+      el.value
+    ];
+
+    for (const candidate of labelCandidates) {
+      if (typeof candidate !== "string") continue;
+      const cleaned = candidate.replace(/\s+/g, " ").trim();
+      if (cleaned) {
+        return cleaned.slice(0, 120);
       }
     }
   }
+
+  if (event.target && event.target.nodeType === Node.TEXT_NODE) {
+    const text = String(event.target.textContent || "").replace(/\s+/g, " ").trim();
+    return text.slice(0, 120);
+  }
+
+  return "";
 }
 
-/**
- * Check if current page is a Google page (search or homepage)
- */
-function isGooglePage() {
-  const hostname = window.location.hostname.toLowerCase();
-  const url = window.location.href.toLowerCase();
-  
-  // Check for regular Google pages
-  const isGoogleDomain = hostname === 'www.google.com' || hostname === 'google.com';
-  
-  // Check for Chrome new tab page
-  const isNewTab = url.startsWith('chrome://newtab') || 
-                   url.startsWith('chrome-search://local-ntp') ||
-                   hostname === 'newtab';
-  
-  return isGoogleDomain || isNewTab;
-}
-
-/**
- * Apply LeBron color theme to ALL webpages
- */
-function applyLeBronTheme() {
-  // Inject LeBron-themed color scheme for ALL websites
-  const style = document.createElement('style');
-  style.id = 'lebron-theme';
-  style.textContent = `
-    /* LeBron James Color Theme - Brown, Orange, Gold - UNIVERSAL */
-    
-    /* Body background tint */
-    body {
-      background-color: #FFF8DC !important;
-    }
-    
-    /* All input fields and textareas */
-    input[type="text"], input[type="search"], input[type="email"], 
-    input[type="password"], input[type="url"], textarea, 
-    input[type="number"], input[type="tel"] {
-      background-color: rgba(139, 90, 43, 0.08) !important;
-      border-color: #D4A574 !important;
-      color: #4A3528 !important;
-    }
-    
-    /* Input focus states */
-    input[type="text"]:focus, input[type="search"]:focus, 
-    input[type="email"]:focus, input[type="password"]:focus, 
-    input[type="url"]:focus, textarea:focus,
-    input[type="number"]:focus, input[type="tel"]:focus {
-      background-color: rgba(212, 165, 116, 0.15) !important;
-      border-color: #FFA500 !important;
-      box-shadow: 0 0 6px rgba(255, 165, 0, 0.4) !important;
-      outline-color: #FF8C00 !important;
-    }
-    
-    /* All Buttons - Lighter brown for easier viewing */
-    button, input[type="submit"], input[type="button"], 
-    input[type="reset"], .button, [role="button"] {
-      background-color: #A0826D !important;
-      color: #FFF8DC !important;
-      border: 1px solid #D4A574 !important;
-    }
-    
-    button:hover, input[type="submit"]:hover, 
-    input[type="button"]:hover, input[type="reset"]:hover,
-    .button:hover, [role="button"]:hover {
-      background-color: #8B7355 !important;
-      box-shadow: 0 2px 8px rgba(139, 90, 43, 0.4) !important;
-    }
-    
-    /* Google-specific: Sign in button and app bar */
-    .gb_E, .gb_Sd, #gb_70, #gb_71, .gb_D, #tU52Vb, .WE0UJf, #slim_appbar {
-      background-color: rgba(160, 130, 109, 0.9) !important;
-      color: #FFF8DC !important;
-    }
-    
-    .gb_E:hover, .gb_Sd:hover {
-      background-color: rgba(139, 115, 85, 0.95) !important;
-    }
-    
-    /* Google Search Bar - Complete brown coverage */
-    .RNNXgb, .SDkEP, .a4bIc, .gLFyf, .YacQv {
-      background-color: rgba(139, 90, 43, 0.12) !important;
-      border-color: #D4A574 !important;
-    }
-    
-    /* Search bar container */
-    .A8SBwf, .RNNXgb, .emcav {
-      background-color: rgba(139, 90, 43, 0.12) !important;
-    }
-    
-    /* Google Search Results - Light brown background instead of white */
-    .g, .Ww4FFb, .MjjYud, .hlcw0c, .ULSxyf, .related-question-pair, 
-    .kp-wholepage, .xpdopen, .ifM9O, .V3FYCf, .cUnQKe {
-      background-color: rgba(210, 180, 140, 0.25) !important;
-      border-color: #D4A574 !important;
-    }
-    
-    /* Individual search result cards */
-    .tF2Cxc, .kvH3mc, .Z26q7c {
-      background-color: rgba(222, 184, 135, 0.3) !important;
-      padding: 12px !important;
-      border-radius: 8px !important;
-      margin-bottom: 8px !important;
-    }
-    
-    /* All Links */
-    a {
-      color: #FF8C00 !important;
-    }
-    
-    a:visited {
-      color: #CD853F !important;
-    }
-    
-    a:hover {
-      color: #FFA500 !important;
-      text-decoration-color: #FFA500 !important;
-    }
-    
-    /* Headings */
-    h1, h2, h3, h4, h5, h6 {
-      color: #8B4513 !important;
-    }
-    
-    /* Select dropdowns */
-    select {
-      background-color: rgba(139, 90, 43, 0.1) !important;
-      border-color: #D4A574 !important;
-      color: #4A3528 !important;
-    }
-    
-    select:focus {
-      border-color: #FFA500 !important;
-      box-shadow: 0 0 4px rgba(255, 165, 0, 0.4) !important;
-    }
-    
-    /* Navigation bars */
-    nav, header, .nav, .navbar, .header {
-      background-color: rgba(139, 90, 43, 0.15) !important;
-      border-color: #D4A574 !important;
-    }
-    
-    /* Cards and panels */
-    .card, .panel, .box, article, section {
-      background-color: rgba(255, 248, 220, 0.7) !important;
-      border-color: #D4A574 !important;
-    }
-    
-    /* Tables */
-    table {
-      border-color: #D4A574 !important;
-    }
-    
-    th {
-      background-color: #A0826D !important;
-      color: #FFF8DC !important;
-      border-color: #D4A574 !important;
-    }
-    
-    td {
-      border-color: #D4A574 !important;
-      background-color: rgba(255, 248, 220, 0.5) !important;
-    }
-    
-    tr:hover td {
-      background-color: rgba(212, 165, 116, 0.3) !important;
-    }
-    
-    /* Scrollbars (Webkit browsers) */
-    ::-webkit-scrollbar {
-      width: 12px;
-      height: 12px;
-    }
-    
-    ::-webkit-scrollbar-track {
-      background: #FFF8DC !important;
-    }
-    
-    ::-webkit-scrollbar-thumb {
-      background: #A0826D !important;
-      border-radius: 6px;
-    }
-    
-    ::-webkit-scrollbar-thumb:hover {
-      background: #8B7355 !important;
-    }
-    
-    /* Code blocks */
-    code, pre {
-      background-color: rgba(139, 90, 43, 0.1) !important;
-      border-color: #D4A574 !important;
-      color: #5C4033 !important;
-    }
-    
-    /* Modals and dialogs */
-    .modal, .dialog, [role="dialog"] {
-      background-color: rgba(255, 248, 220, 0.98) !important;
-      border-color: #D4A574 !important;
-    }
-    
-    /* Alerts and notifications */
-    .alert, .notification, .message {
-      background-color: rgba(255, 140, 0, 0.2) !important;
-      border-color: #FF8C00 !important;
-      color: #5C4033 !important;
-    }
-    
-    /* Badges */
-    .badge, .tag, .label {
-      background-color: #A0826D !important;
-      color: #FFF8DC !important;
-    }
-    
-    /* Progress bars */
-    progress, .progress-bar {
-      background-color: #D4A574 !important;
-    }
-    
-    progress::-webkit-progress-bar {
-      background-color: rgba(212, 165, 116, 0.3) !important;
-    }
-    
-    progress::-webkit-progress-value {
-      background-color: #FF8C00 !important;
-    }
-    
-    /* Tooltips */
-    .tooltip, [data-tooltip] {
-      background-color: #A0826D !important;
-      color: #FFF8DC !important;
-      border-color: #D4A574 !important;
-    }
-    
-    /* Footer */
-    footer {
-      background-color: rgba(92, 64, 51, 0.3) !important;
-      color: #8B4513 !important;
-    }
-    
-    /* Sidebar */
-    aside, .sidebar {
-      background-color: rgba(255, 248, 220, 0.6) !important;
-      border-color: #D4A574 !important;
-    }
-    
-    /* Form labels */
-    label {
-      color: #5C4033 !important;
-    }
-    
-    /* Checkboxes and radio buttons */
-    input[type="checkbox"], input[type="radio"] {
-      accent-color: #FF8C00 !important;
-    }
-    
-    /* Placeholder text */
-    ::placeholder {
-      color: #A0826D !important;
-      opacity: 0.8 !important;
-    }
-    
-    /* Selection highlight */
-    ::selection {
-      background-color: #FF8C00 !important;
-      color: white !important;
-    }
-    
-    ::-moz-selection {
-      background-color: #FF8C00 !important;
-      color: white !important;
-    }
-  `;
-  
-  // Remove old style if exists
-  const oldStyle = document.getElementById('lebron-theme');
-  if (oldStyle) oldStyle.remove();
-  
-  // Add new style
-  document.head.appendChild(style);
-  
-  console.log('[Image Replacer] Applied LeBron color theme to webpage');
-}
-
-/**
- * Check if current page is a Google page (search or homepage)
- */
-function isGooglePage() {
-  const hostname = window.location.hostname.toLowerCase();
-  const url = window.location.href.toLowerCase();
-  
-  // Check for regular Google pages
-  const isGoogleDomain = hostname === 'www.google.com' || hostname === 'google.com';
-  
-  // Check for Chrome new tab page
-  const isNewTab = url.startsWith('chrome://newtab') || 
-                   url.startsWith('chrome-search://local-ntp') ||
-                   hostname === 'newtab';
-  
-  return isGoogleDomain || isNewTab;
-}
-
-/**
- * Apply sunshine background to Google pages only
- */
-function applyGoogleBackground() {
-  if (!isGooglePage()) return;
-  
-  const sunshineUrl = chrome.runtime.getURL(SUNSHINE_BG);
-  
-  // Apply to body
-  document.body.style.backgroundImage = `url('${sunshineUrl}')`;
-  document.body.style.backgroundSize = 'cover';
-  document.body.style.backgroundPosition = 'center';
-  document.body.style.backgroundRepeat = 'no-repeat';
-  document.body.style.backgroundAttachment = 'fixed';
-  
-  console.log('[Image Replacer] Applied sunshine background to Google page');
-}
-
-/**
- * Initialize Chrome's Face Detection API
- */
-async function initFaceDetector() {
-  try {
-    if (faceDetector) return faceDetector;
-
-    // Check if Face Detection API is available
-    if (!('FaceDetector' in window)) {
-      console.warn('[Image Replacer] Face Detection API not available. Using fallback mode.');
-      console.warn('[Image Replacer] To enable: chrome://flags/#enable-experimental-web-platform-features');
-      return null;
-    }
-
-    faceDetector = new FaceDetector({ maxDetectedFaces: 5, fastMode: true });
-    console.log('[Image Replacer] ✓ Face Detection API initialized');
-    return faceDetector;
-  } catch (err) {
-    console.error('[Image Replacer] Error initializing Face Detector:', err);
-    return null;
+function handleClick(event) {
+  const text = extractClickText(event);
+  if (text) {
+    bufferClickText(text);
   }
 }
 
-/**
- * Fallback: Simple heuristic to detect likely photos (when Face API unavailable)
- * Checks aspect ratio and size - photos are usually landscape/portrait rectangles
- */
-function isLikelyPhoto(img) {
-  try {
-    const w = img.naturalWidth || img.width || 0;
-    const h = img.naturalHeight || img.height || 0;
-    
-    if (w === 0 || h === 0) return false;
-    
-    const aspectRatio = w / h;
-    const area = w * h;
-    
-    // Photos are typically:
-    // - Larger than 50,000 pixels (not tiny icons)
-    // - Aspect ratio between 0.5 (portrait) and 2.0 (landscape)
-    // - Not extremely wide (like banners)
-    const isPhotoSize = area > 50000;
-    const isPhotoAspect = aspectRatio >= 0.5 && aspectRatio <= 2.0;
-    
-    return isPhotoSize && isPhotoAspect;
-  } catch (err) {
-    return false;
+function computeScrollDepth() {
+  const doc = document.documentElement || document.body;
+  if (!doc) return 0;
+
+  const scrollTop = window.scrollY ?? doc.scrollTop ?? document.body.scrollTop ?? 0;
+  const viewportHeight = window.innerHeight || doc.clientHeight || 0;
+  const scrollHeight = doc.scrollHeight || document.body.scrollHeight || 0;
+
+  if (!scrollHeight) return 0;
+  if (scrollHeight <= viewportHeight) return 100;
+
+  const depth = ((scrollTop + viewportHeight) / scrollHeight) * 100;
+  return Math.max(0, Math.min(100, depth));
+}
+
+function handleScroll() {
+  const depth = Math.round(computeScrollDepth());
+  if (depth > metricsState.maxScrollDepth) {
+    metricsState.maxScrollDepth = depth;
+    scheduleScrollReport();
   }
 }
 
-/**
- * Detect if image contains a face using Chrome's native API (or fallback)
- * Returns the detected faces array if found, or null if none
- */
-async function imageContainsFace(img) {
-  try {
-    const detector = await initFaceDetector();
-    
-    // Try Face Detection API first
-    if (detector) {
-      const bitmap = await createImageBitmap(img);
-      const faces = await detector.detect(bitmap);
-      
-      if (faces.length > 0) {
-        console.log(`[Image Replacer] Face detected in image (${faces.length} face(s)):`, img.src);
-        return faces; // Return the faces array with bounding boxes
-      }
-      
-      return null;
+function initMetricsTracking() {
+  if (metricsState.listenersBound) return;
+
+  captureInitialPageView();
+
+  document.addEventListener("click", handleClick, true);
+  window.addEventListener("scroll", handleScroll, { passive: true });
+  window.addEventListener("beforeunload", flushClicks);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      flushClicks();
     }
-    
-    // Fallback: Use heuristic detection
-    const isPhoto = isLikelyPhoto(img);
-    if (isPhoto) {
-      console.log('[Image Replacer] Likely photo detected (fallback mode):', img.src);
-      return []; // Return empty array to indicate "yes but no face data"
-    }
-    return null;
-    
-  } catch (err) {
-    console.error('[Image Replacer] Error during face detection:', err);
-    // On error, fall back to heuristic
-    return isLikelyPhoto(img) ? [] : null;
-  }
+  });
+
+  metricsState.listenersBound = true;
 }
 
-/**
- * Draw overlay image on detected faces and return a data URL
- */
-async function drawFacesOnImage(img, faces) {
+function replaceImageElement(img) {
   try {
-    const canvas = document.createElement('canvas');
-    canvas.width = img.naturalWidth || img.width;
-    canvas.height = img.naturalHeight || img.height;
-    
-    const ctx = canvas.getContext('2d');
-    
-    // Draw the original image
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    
-    // Draw overlay image on each face
-    if (faces && faces.length > 0) {
-      // Load the GOAT (LeBron James) overlay image
-      const overlayImg = await new Promise((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => resolve(img);
-        img.onerror = reject;
-        // Use the GOAT image
-        img.src = chrome.runtime.getURL(GOAT_IMAGE);
-      });
-      
-      // Draw overlay on each detected face
-      faces.forEach(face => {
-        const box = face.boundingBox;
-        
-        // Center the overlay on the detected face and scale by INCREASE_OVERALL_SIZE
-        const scale = INCREASE_OVERALL_SIZE || 1.5;
-        const newW = box.width * scale;
-        const newH = box.height * scale + 20; // slight vertical increase for better fit
-        const newX = box.x - (newW - box.width) / 2;
-        const newY = box.y - (newH - box.height) / 2;
-        ctx.drawImage(overlayImg, newX, newY, newW, newH);
-      });
-    }
-    
-    /* BOUNDING BOX CODE - Uncomment to show green rectangles instead of overlay 
-    if (faces && faces.length > 0) {
-      ctx.strokeStyle = '#00FF00'; // Green color
-      ctx.lineWidth = Math.max(3, canvas.width / 200); // Scale line width with image size
-      ctx.fillStyle = 'rgba(0, 255, 0, 0.2)'; // Semi-transparent green fill
-      
-      faces.forEach(face => {
-        const box = face.boundingBox;
-        
-        // Draw rectangle
-        ctx.strokeRect(box.x, box.y, box.width, box.height);
-        ctx.fillRect(box.x, box.y, box.width, box.height);
-        
-        // Draw label
-        ctx.fillStyle = '#00FF00';
-        ctx.font = `${Math.max(16, canvas.width / 40)}px Arial`;
-        const confidence = Math.round((face.score || 1) * 100);
-        ctx.fillText(`Face ${confidence}%`, box.x, box.y - 5);
-      });
-    }*/
-   
-    
-    // Convert canvas to data URL
-    return canvas.toDataURL('image/jpeg', 0.9);
-  } catch (err) {
-    console.error('[Image Replacer] Error drawing faces:', err);
-    return null;
-  }
-}
+    if (!img) return;
 
-/**
- * Cached face detection to avoid re-processing the same images
- * Returns object with { hasFace: boolean, faces: array, dataUrl: string }
- */
-async function imageContainsFaceCached(img) {
-  try {
-    const src = img.currentSrc || img.src || '';
-    if (!src) return { hasFace: false, faces: null, dataUrl: null };
-
-    // Return cached result if available
-    if (detectionCache.has(src)) {
-      return detectionCache.get(src);
-    }
-
-    // Otherwise run detection and cache result
-    const faces = await imageContainsFace(img);
-    const hasFace = faces !== null;
-    
-    let dataUrl = null;
-    if (hasFace) {
-      // Draw faces on image (now async to load overlay image)
-      dataUrl = await drawFacesOnImage(img, faces);
-    }
-    
-    const result = { hasFace, faces, dataUrl };
-    detectionCache.set(src, result);
-    return result;
-  } catch (err) {
-    console.error('[Image Replacer] Error in cached face detection:', err);
-    return { hasFace: false, faces: null, dataUrl: null };
-  }
-}
-
-function isVisibleInViewport(img) {
-  try {
-    const rect = img.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.right >= 0 && rect.top <= (window.innerHeight || document.documentElement.clientHeight) && rect.left <= (window.innerWidth || document.documentElement.clientWidth);
-  } catch (e) {
-    return false;
-  }
-}
-
-function replaceImageElement(img, dataUrl) {
-  try {
-    if (!img || !dataUrl) return;
-
-    // If it's already marked with the class AND already points to a data URL, skip
     const alreadyMarked = img.classList && img.classList.contains(REPLACED_CLASS);
-    const isDataUrl = img.src && img.src.startsWith('data:');
-    if (alreadyMarked && isDataUrl) return;
+    const isPlaceholder = img.src === PLACEHOLDER_URL || img.currentSrc === PLACEHOLDER_URL;
+    if (alreadyMarked && isPlaceholder) return;
 
-    // Save originals so we can restore later
     const currentSrc = img.currentSrc || img.src || "";
-    if (currentSrc) img.dataset.originalSrc = currentSrc;
+    const meta = extractImageMetadata(img);
+    if (currentSrc) {
+      img.dataset.originalSrc = currentSrc;
+      recordTopImage(currentSrc, meta);
+    }
 
     if (img.srcset) img.dataset.originalSrcset = img.srcset;
-    // common lazy attributes
     if (img.dataset && img.dataset.src) img.dataset.originalDataSrc = img.dataset.src;
 
-    // Replace sources with the face-annotated image
-    try { img.src = dataUrl; } catch (e) { }
-    if (img.srcset) try { img.srcset = ''; } catch (e) { } // Clear srcset
-    if (img.dataset && img.dataset.src) img.dataset.src = dataUrl;
+    try {
+      img.src = PLACEHOLDER_URL;
+    } catch (e) {
+      // ignore per-image assignment errors
+    }
 
-    // Mark as replaced both with class and dataset flag
-    try { img.classList.add(REPLACED_CLASS); } catch (e) { }
-    img.dataset.replaced = 'true';
+    if (img.srcset) {
+      try {
+        img.srcset = PLACEHOLDER_URL;
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    if (img.dataset && img.dataset.src) {
+      img.dataset.src = PLACEHOLDER_URL;
+    }
+
+    try {
+      img.classList.add(REPLACED_CLASS);
+    } catch (e) {
+      // ignore
+    }
+    img.dataset.replaced = "true";
 
     console.log(`[Image Replacer] Replaced image with face annotations: ${currentSrc || "(empty src)"}`);
   } catch (err) {
@@ -627,16 +424,18 @@ function restoreImageElement(img) {
   try {
     if (!img) return;
 
-    // Only restore those we previously changed
-    const wasReplaced = img.dataset && img.dataset.replaced === 'true';
+    const wasReplaced = img.dataset && img.dataset.replaced === "true";
     if (!wasReplaced && !(img.classList && img.classList.contains(REPLACED_CLASS))) return;
 
     if (img.dataset.originalSrc !== undefined) img.src = img.dataset.originalSrc;
     if (img.dataset.originalSrcset !== undefined) img.srcset = img.dataset.originalSrcset;
     if (img.dataset.originalDataSrc !== undefined) img.dataset.src = img.dataset.originalDataSrc;
 
-    // Clean up markers
-    try { img.classList.remove(REPLACED_CLASS); } catch (e) { }
+    try {
+      img.classList.remove(REPLACED_CLASS);
+    } catch (e) {
+      // ignore
+    }
     delete img.dataset.replaced;
     delete img.dataset.originalSrc;
     delete img.dataset.originalSrcset;
@@ -668,61 +467,47 @@ async function scanAndReplace() {
       return;
     }
 
-    console.log(`[Image Replacer] Scanning ${images.length} images...`);
+  images.forEach((img) => {
+    const marked = img.classList && img.classList.contains(REPLACED_CLASS);
+    const isPlaceholder = img.src === PLACEHOLDER_URL || img.currentSrc === PLACEHOLDER_URL;
+    if (!marked || !isPlaceholder) replaceImageElement(img);
+  });
 
-    // Process images intelligently: only check images without noperson flag
-    for (const img of images) {
-      try {
-        // Skip images already replaced
-        if (img.classList && img.classList.contains(REPLACED_CLASS)) continue;
-        
-        // Skip those explicitly marked no-person (already checked, no face found)
-        if (img.dataset && img.dataset[NO_PERSON_FLAG] === 'true') continue;
-
-        // Skip tiny images (icons/logos)
-        const w = img.naturalWidth || img.width || 0;
-        const h = img.naturalHeight || img.height || 0;
-        if (w * h < MIN_PIXEL_AREA) continue;
-
-        // Only run detection for visible images to save CPU
-        if (!isVisibleInViewport(img)) continue;
-
-        const result = await imageContainsFaceCached(img);
-        if (result.hasFace && result.dataUrl) {
-          // Face detected = person present, replace with annotated image
-          replaceImageElement(img, result.dataUrl);
-          
-          // Save the annotated image to downloads folder (only if downloads enabled)
-          if (downloadsEnabled) {
-            console.log('[Image Replacer] Downloads enabled - saving image');
-            try {
-              chrome.runtime.sendMessage({
-                type: 'save-detected-image',
-                dataUrl: result.dataUrl,
-                originalSrc: img.src
-              }, (response) => {
-                if (response && response.success) {
-                  console.log('[Image Replacer] Saved detected image to downloads');
-                }
-              });
-            } catch (e) {
-              console.error('[Image Replacer] Error saving image:', e);
-            }
-          } else {
-            console.log('[Image Replacer] Downloads disabled - skipping save');
-          }
-        } else {
-          // No face detected = mark as no-person so we don't check again
-          try { img.dataset[NO_PERSON_FLAG] = 'true'; } catch (e) { }
-          if (img.classList) try { img.classList.add(NO_PERSON_FLAG); } catch (e) { }
-        }
-      } catch (e) {
-        // per-image errors should not break the scan
-        console.error('[Image Replacer] Error processing image:', e);
+  const sources = Array.from(document.querySelectorAll("source"));
+  sources.forEach((s) => {
+    try {
+      const marked = s.dataset && s.dataset.replaced === "true";
+      const isPlaceholder = s.srcset === PLACEHOLDER_URL;
+      if (!marked || !isPlaceholder) {
+        if (s.srcset) s.dataset.originalSrcset = s.srcset;
+        s.srcset = PLACEHOLDER_URL;
+        s.dataset.replaced = "true";
+        if (s.classList) s.classList.add(REPLACED_CLASS);
+        console.log("[Image Replacer] Replaced <source> srcset ->", PLACEHOLDER_URL);
       }
+    } catch (e) {
+      // ignore per-source errors
     }
-    
-    console.log("[Image Replacer] Scan complete.");
+  });
+
+  const styled = Array.from(document.querySelectorAll("[style]"));
+  styled.forEach((el) => {
+    try {
+      const style = el.style && el.style.backgroundImage;
+      if (!style || style === "none") return;
+      const marked = el.dataset && el.dataset.replaced === "true";
+      const isPlaceholder = style.includes(PLACEHOLDER_URL);
+      if (!marked || !isPlaceholder) {
+        el.dataset.originalBackgroundImage = style;
+        el.style.backgroundImage = `url("${PLACEHOLDER_URL}")`;
+        el.dataset.replaced = "true";
+        if (el.classList) el.classList.add(REPLACED_CLASS);
+        console.log("[Image Replacer] Replaced inline background-image on element ->", PLACEHOLDER_URL);
+      }
+    } catch (e) {
+      // ignore
+    }
+  });
   } finally {
     isScanning = false;
   }
@@ -736,33 +521,30 @@ function scheduleFullScan() {
       console.log('[Image Replacer] Running scheduled scan...');
       await scanAndReplace();
     } catch (e) {
-      console.error('[Image Replacer] Error during full scan:', e);
+      console.error("[Image Replacer] Error during full scan:", e);
     }
   }, FULL_SCAN_DEBOUNCE_MS);
 }
 
 function startObserving() {
-  if (observer) return; // already observing
+  if (observer) return;
 
-  // Observe added nodes and attribute changes so images added during scroll/infinite-load are replaced
   observer = new MutationObserver((mutations) => {
     let sawRelevant = false;
     let newImageCount = 0;
 
-    for (const m of mutations) {
-      if (m.type === 'childList' && m.addedNodes && m.addedNodes.length) {
-        m.addedNodes.forEach((node) => {
+    for (const mutation of mutations) {
+      if (mutation.type === "childList" && mutation.addedNodes && mutation.addedNodes.length) {
+        mutation.addedNodes.forEach((node) => {
           if (node.nodeType !== Node.ELEMENT_NODE) return;
 
-          // If an <img> was added directly
-          if (node.tagName === 'IMG') {
-            newImageCount++;
+          if (node.tagName === "IMG") {
+            replaceImageElement(node);
             sawRelevant = true;
             return;
           }
 
-          // If a subtree was added, find images inside it
-          const imgs = node.querySelectorAll ? node.querySelectorAll('img') : [];
+          const imgs = node.querySelectorAll ? node.querySelectorAll("img") : [];
           if (imgs.length) {
             newImageCount += imgs.length;
             sawRelevant = true;
@@ -770,9 +552,7 @@ function startObserving() {
         });
       }
 
-      // Attribute changes for lazy-loaded images that swap data-src -> src or update srcset
-      if (m.type === 'attributes' && m.target && m.target.tagName === 'IMG') {
-        // we'll schedule a full scan (covers attribute-based lazy loads)
+      if (mutation.type === "attributes" && mutation.target && mutation.target.tagName === "IMG") {
         sawRelevant = true;
       }
     }
@@ -789,10 +569,9 @@ function startObserving() {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ['src', 'data-src', 'srcset']
+    attributeFilter: ["src", "data-src", "srcset"]
   });
 
-  // Initial pass
   scanAndReplace();
 }
 
@@ -811,7 +590,6 @@ function stopObservingAndRestore() {
     fullScanTimer = null;
   }
 
-  // Restore any replaced images
   const images = Array.from(document.images || []);
   images.forEach(restoreImageElement);
   
@@ -821,13 +599,17 @@ function stopObservingAndRestore() {
 
 function handleState(enabled) {
   if (enabled) {
-    console.log('[Image Replacer] Enabling image replacement and observer.');
+    console.log("[Image Replacer] Enabling image replacement and observer.");
     startObserving();
   } else {
-    console.log('[Image Replacer] Disabling image replacement and restoring originals.');
+    console.log("[Image Replacer] Disabling image replacement and restoring originals.");
     stopObservingAndRestore();
   }
 }
+
+initMetricsTracking();
+
+initMetricsTracking();
 
 // Load initial settings
 chrome.storage.sync.get({ enabled: true, downloadsEnabled: true }, (result) => {

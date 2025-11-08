@@ -15,6 +15,12 @@
       "run_at": "document_idle"
     }
   ],
+  "icons": {
+    "16": "logo.png",
+    "32": "logo.png",
+    "48": "logo.png",
+    "128": "logo.png"
+  },
   "web_accessible_resources": [
     {
       "resources": ["goat.png", "sunshine.jpg"],
@@ -23,7 +29,13 @@
   ],
   "action": {
     "default_title": "Image Replacer",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "logo.png",
+      "32": "logo.png",
+      "48": "logo.png",
+      "128": "logo.png"
+    }
   },
   "chrome_url_overrides": {
     "newtab": "newtab.html"
