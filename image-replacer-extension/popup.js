@@ -1,7 +1,14 @@
 const toggleButton = document.getElementById("toggle");
+const toggleDownloadsButton = document.getElementById("toggleDownloads");
+const openDownloadsButton = document.getElementById("openDownloads");
+const resetButton = document.getElementById("reset");
 
 function updateButton(enabled) {
-  toggleButton.textContent = enabled ? "Disable image replacement" : "Enable image replacement";
+  toggleButton.textContent = enabled ? "Disable face detection" : "Enable face detection";
+}
+
+function updateDownloadsButton(enabled) {
+  toggleDownloadsButton.textContent = enabled ? "💾 Disable auto-save" : "💾 Enable auto-save";
 }
 
 function getActiveTab() {
@@ -12,10 +19,13 @@ function getActiveTab() {
   });
 }
 
-chrome.storage.sync.get({ enabled: true }, (result) => {
+chrome.storage.sync.get({ enabled: true, saveDownloads: false }, (result) => {
   const enabled = Boolean(result.enabled);
+  const saveDownloads = Boolean(result.saveDownloads);
   updateButton(enabled);
+  updateDownloadsButton(saveDownloads);
   toggleButton.disabled = false;
+  toggleDownloadsButton.disabled = false;
 });
 
 toggleButton.addEventListener("click", async () => {
@@ -37,6 +47,34 @@ toggleButton.addEventListener("click", async () => {
 
       toggleButton.disabled = false;
     });
+  });
+});
+
+// Toggle auto-save downloads
+toggleDownloadsButton.addEventListener("click", () => {
+  toggleDownloadsButton.disabled = true;
+
+  chrome.storage.sync.get({ saveDownloads: false }, (result) => {
+    const saveDownloads = !Boolean(result.saveDownloads);
+
+    chrome.storage.sync.set({ saveDownloads }, () => {
+      updateDownloadsButton(saveDownloads);
+      toggleDownloadsButton.disabled = false;
+    });
+  });
+});
+
+// Open downloads folder
+openDownloadsButton.addEventListener("click", () => {
+  chrome.downloads.showDefaultFolder();
+});
+
+// Reset download counter
+resetButton.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: 'reset-counter' }, (response) => {
+    if (response && response.success) {
+      alert('Download counter reset!');
+    }
   });
 });
 

@@ -8,7 +8,7 @@
         font-family: Arial, sans-serif;
         margin: 0;
         padding: 12px;
-        width: 200px;
+        width: 250px;
       }
 
       h1 {
@@ -21,12 +21,36 @@
         padding: 8px;
         font-size: 14px;
         cursor: pointer;
+        margin-bottom: 8px;
+      }
+      
+      #reset {
+        background-color: #f44336;
+        color: white;
+        border: none;
+      }
+      
+      #reset:hover {
+        background-color: #da190b;
+      }
+      
+      #openDownloads {
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+      }
+      
+      #openDownloads:hover {
+        background-color: #45a049;
       }
     </style>
   </head>
   <body>
-    <h1>Image Replacer</h1>
+    <h1>Face Detector</h1>
     <button id="toggle">Loading...</button>
+    <button id="toggleDownloads">Loading...</button>
+    <button id="openDownloads">📁 Open Downloads</button>
+    <button id="reset">🔄 Reset Counter</button>
     <script src="popup.js"></script>
   </body>
 </html>
