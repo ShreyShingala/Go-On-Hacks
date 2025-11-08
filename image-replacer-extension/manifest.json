@@ -3,7 +3,7 @@
   "name": "Image Replacer Prototype",
   "description": "Proof-of-concept Chrome extension that swaps all images on a page with a placeholder.",
   "version": "0.1.0",
-  "permissions": ["storage", "tabs", "downloads"],
+  "permissions": ["storage", "tabs"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
@@ -23,7 +23,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["goat.png", "sunshine.jpg"],
+      "resources": ["goat.png", "sunshine.jpg", "lebrontogo.jpg"],
       "matches": ["<all_urls>"]
     }
   ],
