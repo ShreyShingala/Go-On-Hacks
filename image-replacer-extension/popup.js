@@ -170,7 +170,7 @@ cameraButton.addEventListener("click", async () => {
       url: chrome.runtime.getURL('camera.html'),
       type: 'popup',
       width: 700,
-      height: 600
+      height: 700
     });
   } catch (error) {
     console.error('Error opening camera:', error);

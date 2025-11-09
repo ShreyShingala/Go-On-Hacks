@@ -13,6 +13,7 @@ body {
   position: relative;
   width: 100%;
   max-width: 640px;
+  overflow: hidden;
 }
 
 #video {
@@ -47,6 +48,22 @@ body {
   opacity: 0;
   transition: opacity 0.5s ease;
   border-radius: 8px;
+}
+
+.lebron-head {
+  position: absolute;
+  bottom: -120px;
+  left: 50%;
+  transform: translateX(-50%) scaleY(1);
+  width: 150px;
+  height: auto;
+  max-height: none;
+  object-fit: contain;
+  z-index: 500;
+  pointer-events: none;
+  transform-origin: bottom center;
+  transition: transform 0.1s ease-out;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
 }
 
 .controls {

@@ -1336,6 +1336,12 @@ function createOverlay(mode) {
   if (mode === 'milk' && milkOverlay) return milkOverlay;
   if (mode === 'love' && loveOverlay) return loveOverlay;
   
+  // Ensure document.body exists
+  if (!document.body) {
+    console.error('[Content Script] document.body not available for overlay creation');
+    return null;
+  }
+  
   const overlay = document.createElement('img');
   overlay.id = `extension-${mode}-overlay`;
   overlay.src = chrome.runtime.getURL(`assets/${mode}.png`);
@@ -1353,7 +1359,14 @@ function createOverlay(mode) {
     transition: opacity 0.3s ease !important;
     display: block !important;
   `;
-  document.body.appendChild(overlay);
+  
+  try {
+    document.body.appendChild(overlay);
+    console.log('[Content Script] Created overlay element:', mode, overlay);
+  } catch (err) {
+    console.error('[Content Script] Failed to append overlay to body:', err);
+    return null;
+  }
   
   // Assign to the correct variable based on mode
   if (mode === 'milk') {
@@ -1375,14 +1388,38 @@ function showMilkOverlay() {
   // Hide love overlay if visible
   hideLoveOverlay();
   
+  // Ensure overlay exists, create if needed
   if (!milkOverlay) {
     milkOverlay = createOverlay('milk');
   }
+  
+  // If still null, try to find existing overlay in DOM
+  if (!milkOverlay) {
+    milkOverlay = document.getElementById('extension-milk-overlay');
+  }
+  
+  // If still null, try creating again after a short delay
+  if (!milkOverlay && document.body) {
+    console.warn('[Content Script] Retrying milk overlay creation...');
+    setTimeout(() => {
+      milkOverlay = createOverlay('milk');
+      if (milkOverlay) {
+        milkOverlay.style.display = 'block';
+        milkOverlay.style.opacity = '1';
+        milkOverlayVisible = true;
+      }
+    }, 100);
+    return;
+  }
+  
   if (milkOverlay) {
     // Ensure overlay is visible
     milkOverlay.style.display = 'block';
     milkOverlay.style.opacity = '1';
     milkOverlayVisible = true;
+    console.log('[Content Script] Milk overlay shown, element:', milkOverlay);
+  } else {
+    console.error('[Content Script] Failed to create/show milk overlay - document.body:', !!document.body);
   }
 }
 
@@ -1396,14 +1433,38 @@ function showLoveOverlay() {
   // Hide milk overlay if visible
   hideMilkOverlay();
   
+  // Ensure overlay exists, create if needed
   if (!loveOverlay) {
     loveOverlay = createOverlay('love');
   }
+  
+  // If still null, try to find existing overlay in DOM
+  if (!loveOverlay) {
+    loveOverlay = document.getElementById('extension-love-overlay');
+  }
+  
+  // If still null, try creating again after a short delay
+  if (!loveOverlay && document.body) {
+    console.warn('[Content Script] Retrying love overlay creation...');
+    setTimeout(() => {
+      loveOverlay = createOverlay('love');
+      if (loveOverlay) {
+        loveOverlay.style.display = 'block';
+        loveOverlay.style.opacity = '1';
+        loveOverlayVisible = true;
+      }
+    }, 100);
+    return;
+  }
+  
   if (loveOverlay) {
     // Ensure overlay is visible
     loveOverlay.style.display = 'block';
     loveOverlay.style.opacity = '1';
     loveOverlayVisible = true;
+    console.log('[Content Script] Love overlay shown, element:', loveOverlay);
+  } else {
+    console.error('[Content Script] Failed to create/show love overlay - document.body:', !!document.body);
   }
 }
 
@@ -1443,14 +1504,23 @@ function hideLoveOverlay() {
 
 // Handle showing overlay based on type
 function handleShowOverlay(overlayType) {
+  console.log('[Content Script] handleShowOverlay called with type:', overlayType);
   if (overlayType === 'safe') {
+    console.log('[Content Script] Showing love overlay');
     showLoveOverlay();
+    if (loveHideTimeout) {
+      clearTimeout(loveHideTimeout);
+    }
     loveHideTimeout = setTimeout(() => {
       hideLoveOverlay();
       loveHideTimeout = null;
     }, 15000);
   } else { // 'unsafe' or default
+    console.log('[Content Script] Showing milk overlay');
     showMilkOverlay();
+    if (milkHideTimeout) {
+      clearTimeout(milkHideTimeout);
+    }
     milkHideTimeout = setTimeout(() => {
       hideMilkOverlay();
       milkHideTimeout = null;
@@ -1460,25 +1530,57 @@ function handleShowOverlay(overlayType) {
 
 // Listen for messages from camera window
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'showOverlay') {
-    handleShowOverlay(message.overlayType || 'unsafe');
-  } else if (message.action === 'hideOverlay') {
+  if (message && message.action === 'showOverlay') {
+    const overlayType = message.overlayType || 'unsafe';
+    console.log('[Content Script] Received showOverlay message:', overlayType, 'sender:', sender);
+    
+    // Ensure overlays exist before showing
+    if (!milkOverlay || !loveOverlay) {
+      console.log('[Content Script] Overlays not initialized, initializing now...');
+      initializeOverlays();
+    }
+    
+    handleShowOverlay(overlayType);
+    sendResponse({ success: true });
+    return true; // Indicate we will send a response asynchronously
+  } else if (message && message.action === 'hideOverlay') {
     hideMilkOverlay();
     hideLoveOverlay();
-  } else if (message.action === 'showMilk') {
+    sendResponse({ success: true });
+    return true;
+  } else if (message && message.action === 'showMilk') {
     // Legacy support
+    if (!milkOverlay) {
+      initializeOverlays();
+    }
     handleShowOverlay('unsafe');
-  } else if (message.action === 'hideMilk') {
+    sendResponse({ success: true });
+    return true;
+  } else if (message && message.action === 'hideMilk') {
     hideMilkOverlay();
+    sendResponse({ success: true });
+    return true;
   }
+  // Return false to indicate we didn't handle this message
+  return false;
 });
 
 // Also listen to chrome.storage for cross-tab synchronization
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'local' && changes.showOverlay) {
     if (changes.showOverlay.newValue === true) {
-      const overlayType = changes.overlayType?.newValue || 'unsafe';
-      handleShowOverlay(overlayType);
+      // Ensure overlays exist
+      if (!milkOverlay || !loveOverlay) {
+        console.log('[Content Script] Overlays not initialized in storage listener, initializing now...');
+        initializeOverlays();
+      }
+      
+      // Get overlayType from storage since it might not be in changes object
+      chrome.storage.local.get(['overlayType'], (result) => {
+        const overlayType = result.overlayType || changes.overlayType?.newValue || 'unsafe';
+        console.log('[Content Script] Showing overlay from storage:', overlayType);
+        handleShowOverlay(overlayType);
+      });
     } else {
       hideMilkOverlay();
       hideLoveOverlay();
@@ -1509,13 +1611,33 @@ chrome.storage.local.get(['showOverlay', 'overlayType', 'overlayTimestamp'], (re
 });
 
 // Ensure overlays are created when DOM is ready
-if (document.body) {
-  milkOverlay = createOverlay('milk');
-  loveOverlay = createOverlay('love');
-} else {
-  document.addEventListener('DOMContentLoaded', () => {
+function initializeOverlays() {
+  if (document.body) {
+    console.log('[Content Script] Initializing overlays...');
     milkOverlay = createOverlay('milk');
     loveOverlay = createOverlay('love');
-  });
+    console.log('[Content Script] Overlays initialized - milk:', !!milkOverlay, 'love:', !!loveOverlay);
+  } else {
+    console.log('[Content Script] Waiting for DOMContentLoaded to initialize overlays...');
+    document.addEventListener('DOMContentLoaded', () => {
+      console.log('[Content Script] DOMContentLoaded fired, initializing overlays...');
+      milkOverlay = createOverlay('milk');
+      loveOverlay = createOverlay('love');
+      console.log('[Content Script] Overlays initialized - milk:', !!milkOverlay, 'love:', !!loveOverlay);
+    });
+  }
 }
+
+// Initialize overlays immediately
+initializeOverlays();
+
+// Also try again after a short delay in case body wasn't ready
+setTimeout(() => {
+  if (!milkOverlay || !loveOverlay) {
+    console.log('[Content Script] Retrying overlay initialization after delay...');
+    initializeOverlays();
+  }
+}, 500);
+
+
 

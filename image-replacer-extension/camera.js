@@ -7,10 +7,12 @@ const statusDiv = document.getElementById('status');
 const progressBar = document.getElementById('progressBar');
 const progressFill = document.getElementById('progressFill');
 const strokeCountDisplay = document.getElementById('strokeCount');
+const lebronHead = document.getElementById('lebronHead');
 let stream = null;
 let model = null;
 let isDetecting = false;
 let handPositionHistory = [];
+let currentHandY = null; // Track current hand Y position for LeBron squishing
 const HISTORY_LENGTH = 30; // Increased for better detection
 
 const STROKE_DETECTION_THRESHOLD = 80; 
@@ -62,8 +64,10 @@ function stopCamera() {
   }
   
   handPositionHistory = [];
+  currentHandY = null;
   strokeCount = 0;
   updateProgressBar();
+  resetLebronSquish();
   hideOverlay('milk');
   hideOverlay('love');
 }
@@ -146,6 +150,10 @@ function detectHands() {
           const centerX = Math.round(x + width / 2);
           const centerY = Math.round(y + height / 2);
           handPositionHistory.push([centerX, centerY]);
+          
+          // Update current hand Y position for LeBron squishing
+          currentHandY = centerY;
+          updateLebronSquish();
 
           // Keep history length constant
           if (handPositionHistory.length > HISTORY_LENGTH) {
@@ -156,6 +164,12 @@ function detectHands() {
             detectStrokingMotion();
           }
         });
+      }
+      
+      // If no hands detected, reset LeBron squish
+      if (!predictions || predictions.length === 0) {
+        currentHandY = null;
+        resetLebronSquish();
       }
       
       // Continue detection loop
@@ -377,8 +391,38 @@ function focusCameraWindow() {
   }
 }
 
+// Update LeBron head squishing based on hand position
+function updateLebronSquish() {
+  if (!lebronHead || !video || !currentHandY) {
+    return;
+  }
+  
+  const videoHeight = video.videoHeight || 720;
+  
+  // Normalize hand Y position (0 = top of video, 1 = bottom of video)
+  const normalizedY = currentHandY / videoHeight;
+  
+  // Calculate scale factor:
+  // - When hand is at top (normalizedY = 0), scaleY = 1.5 (stretched up)
+  // - When hand is at bottom (normalizedY = 1), scaleY = 0.5 (squished down)
+  // - When hand is at middle (normalizedY = 0.5), scaleY = 1.0 (normal)
+  const scaleY = 1.5 - (normalizedY * 1.0); // Range: 1.5 to 0.5
+  
+  // Apply transform with translateX to keep it centered, and scaleY for squishing
+  lebronHead.style.transform = `translateX(-50%) scaleY(${scaleY})`;
+}
+
+// Reset LeBron head to normal state
+function resetLebronSquish() {
+  if (lebronHead) {
+    lebronHead.style.transform = 'translateX(-50%) scaleY(1)';
+  }
+  currentHandY = null;
+}
+
 // Signal all browser pages to show overlay (milk or love based on mode)
 function signalOverlayToAllPages(mode) {
+  console.log('[Camera] Signaling overlay to all pages, mode:', mode);
   // Use chrome.storage to signal all content scripts
   if (typeof chrome !== 'undefined' && chrome.storage) {
     chrome.storage.local.set({ 
@@ -386,15 +430,30 @@ function signalOverlayToAllPages(mode) {
       overlayType: mode, // 'safe' or 'unsafe'
       overlayTimestamp: Date.now() 
     }, () => {
-      // Broadcast to all tabs
+      console.log('[Camera] Storage set, broadcasting to tabs...');
+      // Broadcast to all tabs (excluding extension pages and chrome:// pages)
       chrome.tabs.query({}, (tabs) => {
-        tabs.forEach(tab => {
+        console.log('[Camera] Found', tabs.length, 'tabs total');
+        // Filter out extension pages and chrome:// pages where content scripts don't run
+        const validTabs = tabs.filter(tab => {
+          const url = tab.url || '';
+          return url && 
+                 !url.startsWith('chrome://') && 
+                 !url.startsWith('chrome-extension://') &&
+                 !url.startsWith('edge://') &&
+                 !url.startsWith('about:');
+        });
+        console.log('[Camera] Sending to', validTabs.length, 'valid tabs');
+        validTabs.forEach(tab => {
           chrome.tabs.sendMessage(tab.id, { 
             action: 'showOverlay',
             overlayType: mode,
             timestamp: Date.now()
-          }).catch(() => {
+          }).then(() => {
+            console.log('[Camera] Message sent to tab:', tab.id, tab.url);
+          }).catch((err) => {
             // Ignore errors for tabs that don't have content script
+            console.log('[Camera] Could not send message to tab', tab.id, ':', err.message);
           });
         });
       });
@@ -412,5 +471,7 @@ function signalOverlayToAllPages(mode) {
         });
       });
     }, 15000);
+  } else {
+    console.error('[Camera] chrome.storage is not available');
   }
 }
