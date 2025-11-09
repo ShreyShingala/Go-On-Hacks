@@ -1,10 +1,18 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { postTweet } = require("./twitterClient");
 
 dotenv.config();
+
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const {
+  postTweet,
+  createAuthRequest,
+  exchangeAuthCode,
+  getAuthStatus,
+  clearAuthTokens
+} = require("./twitterClient");
+
 
 const PORT = process.env.PORT || 5051;
 const GEMINI_MODEL = "gemini-2.5-flash-lite";
@@ -12,8 +20,10 @@ const GEMINI_MODEL = "gemini-2.5-flash-lite";
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true }));
 
 let latestSnapshot = null;
+let pendingAuthRequest = null;
 
 function buildSummary(snapshot = {}) {
   const pageTitle = snapshot?.page?.title || "Untitled page";
@@ -140,7 +150,8 @@ app.post("/generate", async (req, res) => {
       tweetResult = await postTweet(tweetText);
     } catch (error) {
       console.error("[Caption Server] Failed to post tweet:", error);
-      tweetError = error.message || "Failed to post tweet.";
+      tweetError =
+        (error && error.message) || "Failed to post tweet. Check server logs for details.";
     }
   }
 
@@ -153,7 +164,63 @@ app.post("/generate", async (req, res) => {
   });
 });
 
+app.get("/auth/status", (_req, res) => {
+  res.json(getAuthStatus());
+});
+
+app.get("/auth/start", (_req, res) => {
+  try {
+    pendingAuthRequest = createAuthRequest();
+    res.redirect(pendingAuthRequest.url);
+  } catch (error) {
+    console.error("[Caption Server] Failed to start auth flow:", error);
+    res
+      .status(500)
+      .send("Unable to start authorization flow. Check server logs for details.");
+  }
+});
+
+app.get("/auth/callback", async (req, res) => {
+  const { code, state } = req.query;
+
+  if (!pendingAuthRequest) {
+    res.status(400).send("No authorization request is pending. Restart via /auth/start.");
+    return;
+  }
+
+  if (!code || !state) {
+    res.status(400).send("Missing authorization code or state parameter.");
+    return;
+  }
+
+  if (state !== pendingAuthRequest.state) {
+    pendingAuthRequest = null;
+    res.status(400).send("State mismatch. Restart the authorization flow.");
+    return;
+  }
+
+  try {
+    await exchangeAuthCode(code, pendingAuthRequest.codeVerifier);
+    pendingAuthRequest = null;
+    res.send(
+      "Authorization complete. You can close this tab and use the extension to post to X/Twitter."
+    );
+  } catch (error) {
+    console.error("[Caption Server] Auth callback failed:", error);
+    pendingAuthRequest = null;
+    res.status(500).send(`Authorization failed: ${error.message}`);
+  }
+});
+
+app.post("/auth/logout", (_req, res) => {
+  clearAuthTokens();
+  pendingAuthRequest = null;
+  res.json({ ok: true });
+});
+
 app.listen(PORT, () => {
   console.log(`[Caption Server] Listening on port ${PORT}`);
+  console.log("Health check: http://localhost:%d/health", PORT);
+  console.log("Begin Twitter auth: http://localhost:%d/auth/start", PORT);
 });
 

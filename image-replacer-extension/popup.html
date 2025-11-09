@@ -95,6 +95,15 @@
         filter: brightness(1.05);
       }
 
+      .action-buttons {
+        display: flex;
+        gap: 8px;
+      }
+
+      .action-buttons button {
+        flex: 1;
+      }
+
       textarea {
         resize: vertical;
         min-height: 140px;
@@ -183,10 +192,14 @@
         <label for="handle">Twitter / X handle</label>
         <input id="handle" type="text" placeholder="@goon67" />
       </div>
-      <button id="generate" disabled>Generate caption</button>
+      <div class="action-buttons">
+        <button id="generate" disabled>Generate caption</button>
+        <button id="generateTweet" disabled>Generate &amp; Tweet</button>
+      </div>
       <textarea id="caption" placeholder="Caption will appear here..." readonly></textarea>
       <button id="copy" disabled>Copy caption</button>
       <p id="status" class="status"></p>
+      <div id="tweetInfo" class="status" style="display: none;"></div>
     </div>
     <div class="card" style="margin-top: 12px;">
       <h2 style="font-size: 16px; margin: 0 0 12px; font-weight: 600;">Image Controls</h2>
