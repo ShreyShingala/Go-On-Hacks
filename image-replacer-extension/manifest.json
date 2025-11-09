@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Image Replacer Prototype",
-  "description": "Proof-of-concept Chrome extension that swaps all images on a page with a placeholder.",
+  "name": "LeReplacer",
+  "description": "We will swap all faces on any page with LeBron James. The GOAT!",
   "version": "0.1.0",
   "permissions": ["storage", "tabs"],
   "host_permissions": ["<all_urls>"],
@@ -16,22 +16,22 @@
     }
   ],
   "icons": {
-    "16": "logo.png",
-    "32": "logo.png",
-    "48": "logo.png",
-    "128": "logo.png"
+    "16": "assets/logo.png",
+    "32": "assets/logo.png",
+    "48": "assets/logo.png",
+    "128": "assets/logo.png"
   },
   "web_accessible_resources": [
     {
       "resources": [
         "sunshine.jpg", 
-        "lebrontogo.jpg",
+        "lebrons/lebrontogo.jpg",
         "lebrons/lebron1.png",
         "lebrons/lebron2.png",
         "lebrons/lebron3.png",
         "lebrons/lebron4.png",
-        "milk.png",
-        "love.png",
+        "assets/milk.png",
+        "assets/love.png",
         "camera.html",
         "camera.js",
         "camera.css"
@@ -43,10 +43,10 @@
     "default_title": "Image Replacer",
     "default_popup": "popup.html",
     "default_icon": {
-      "16": "logo.png",
-      "32": "logo.png",
-      "48": "logo.png",
-      "128": "logo.png"
+      "16": "assets/logo.png",
+      "32": "assets/logo.png",
+      "48": "assets/logo.png",
+      "128": "assets/logo.png"
     }
   }
 }

@@ -17,7 +17,7 @@ const GOAT_IMAGE = "goat.png";
 const LEBRONS = ["lebrons/lebron1.png", "lebrons/lebron2.png", "lebrons/lebron3.png", "lebrons/lebron4.png"];
 
 const SUNSHINE_BG = "sunshine.jpg";
-const LEBRON = "lebrontogo.jpg";
+const LEBRON = "lebrons/lebrontogo.jpg";
 const FADE_TRANSITION_MS = 2000; // 2 seconds fade transition
 const INCREASE_OVERALL_SIZE = 1.5;
 const NO_PERSON_FLAG = "no-person-detected";
@@ -1338,7 +1338,7 @@ function createOverlay(mode) {
   
   const overlay = document.createElement('img');
   overlay.id = `extension-${mode}-overlay`;
-  overlay.src = chrome.runtime.getURL(`${mode}.png`);
+  overlay.src = chrome.runtime.getURL(`assets/${mode}.png`);
 
   overlay.style.cssText = `
     position: fixed !important;

@@ -15,13 +15,89 @@ A Chrome extension that automatically detects and replaces images containing fac
 - **Native Performance**: No heavy ML libraries - uses browser's built-in face detection (10-100x faster!)
 - **Toggle On/Off**: Simple popup UI to enable/disable the extension
 
+## Sharing the Extension
+
+To share this extension with others before publishing to Chrome Web Store:
+
+1. **Create a zip file** of the extension folder:
+   - **Windows**: Right-click the `image-replacer-extension` folder → "Send to" → "Compressed (zipped) folder"
+   - **Mac**: Right-click the folder → "Compress image-replacer-extension"
+   - **Linux**: `zip -r my-extension.zip image-replacer-extension/`
+
+2. **Important**: Make sure the zip contains the folder with all files including:
+   - `manifest.json`
+   - All `.js`, `.html`, `.css` files
+   - All image files (`.png`, `.jpg`, etc.)
+   - All subdirectories (like `lebrons/`)
+
+3. **Share the zip file** via:
+   - Email attachment
+   - Cloud storage (Google Drive, Dropbox, etc.)
+   - File sharing services
+   - Direct download link
+
+4. **Tell users to follow the "Install from Zip File" instructions below**
+
 ## Installation
+
+### Option 1: Install from Zip File (For Sharing)
+
+If you received this extension as a `.zip` file, follow these steps:
+
+1. **Download the zip file** (e.g., `my-extension.zip`)
+
+2. **Extract the zip file**:
+   - **Windows**: Right-click the zip file → "Extract All..." → Choose a location
+   - **Mac**: Double-click the zip file (it will extract automatically)
+   - **Linux**: Right-click → "Extract Here" or use `unzip my-extension.zip`
+
+3. **Open Chrome/Edge** and navigate to:
+   ```
+   chrome://extensions/
+   ```
+   Or in Edge:
+   ```
+   edge://extensions/
+   ```
+
+4. **Enable Developer Mode**:
+   - Toggle the "Developer mode" switch in the top-right corner of the extensions page
+
+5. **Load the Extension**:
+   - Click the **"Load unpacked"** button
+   - Navigate to the **extracted folder** (the folder that contains `manifest.json`)
+   - Select the folder and click "Select Folder" (or "Open" on Mac)
+
+6. **Verify Installation**:
+   - The extension should appear in your extensions list
+   - The extension icon should appear in your browser toolbar
+   - If you see any errors, check the console for details
+
+### Option 2: Install from Source Folder
+
+If you have the source code folder:
 
 1. Open Chrome/Edge and navigate to `chrome://extensions/`
 2. Enable "Developer mode" (toggle in top-right corner)
 3. Click "Load unpacked"
 4. Select the `image-replacer-extension` folder
 5. The extension icon should appear in your toolbar
+
+### Troubleshooting Installation
+
+**"Manifest file is missing or unreadable"**:
+- Make sure you selected the folder that contains `manifest.json`, not a parent folder
+- Verify the zip file was extracted completely
+
+**"This extension may have been corrupted"**:
+- Re-download the zip file
+- Make sure all files were extracted properly
+- Check that `manifest.json` exists in the folder
+
+**Extension doesn't appear**:
+- Check the extensions page for error messages
+- Click "Details" on the extension card to see error logs
+- Make sure Developer Mode is enabled
 
 ## Browser Support
 
