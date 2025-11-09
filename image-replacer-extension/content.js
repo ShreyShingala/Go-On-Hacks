@@ -17,13 +17,16 @@ const GOAT_IMAGE = "goat.png";
 const LEBRONS = ["lebrons/lebron1.png", "lebrons/lebron2.png", "lebrons/lebron3.png", "lebrons/lebron4.png"];
 
 const SUNSHINE_BG = "sunshine.jpg";
+const LEBRON = "lebrontogo.jpg";
+const FADE_TRANSITION_MS = 2000; // 2 seconds fade transition
 const INCREASE_OVERALL_SIZE = 1.5;
 const NO_PERSON_FLAG = "no-person-detected";
 let observer = null;
 let faceDetector = null;
 const detectionCache = new Map();
-let downloadsEnabled = true; // Default to enabled
+let fadeImagesToLeBron = false; // Default to disabled
 let isScanning = false;
+let extensionEnabled = true; // Track if extension is enabled
 let fullScanTimer = null;
 let clickFlushTimer = null;
 let scrollReportTimer = null;
@@ -979,6 +982,36 @@ function startObserving() {
   if (observer) return;
 
   observer = new MutationObserver((mutations) => {
+    // If fade mode is enabled, fade new images instead of face detection
+    if (fadeImagesToLeBron) {
+      let newImages = [];
+      for (const mutation of mutations) {
+        if (mutation.type === "childList" && mutation.addedNodes && mutation.addedNodes.length) {
+          mutation.addedNodes.forEach((node) => {
+            if (node.nodeType !== Node.ELEMENT_NODE) return;
+            if (node.tagName === "IMG") {
+              newImages.push(node);
+            } else {
+              const imgs = node.querySelectorAll ? node.querySelectorAll("img") : [];
+              if (imgs.length) newImages.push(...Array.from(imgs));
+            }
+          });
+        }
+        if (mutation.type === "attributes" && mutation.target && mutation.target.tagName === "IMG") {
+          newImages.push(mutation.target);
+        }
+      }
+      
+      if (newImages.length > 0) {
+        console.log(`[Image Replacer] Fading ${newImages.length} new images to LeBron...`);
+        newImages.forEach((img, index) => {
+          fadeImageToLeBron(img, index * 50);
+        });
+      }
+      return;
+    }
+
+    // Face detection mode
     let sawRelevant = false;
     const newImages = [];
 
@@ -1024,7 +1057,10 @@ function startObserving() {
     attributeFilter: ["src", "data-src", "srcset"]
   });
 
-  scanAndReplace();
+  // Only run initial scan if not in fade mode
+  if (!fadeImagesToLeBron) {
+    scanAndReplace();
+  }
 }
 
 // Process a single image asynchronously
@@ -1100,12 +1136,18 @@ function stopObservingAndRestore() {
 }
 
 function handleState(enabled) {
+  extensionEnabled = enabled;
   if (enabled) {
-    console.log("[Image Replacer] Enabling image replacement and observer.");
-    startObserving();
+    console.log("[Image Replacer] Enabling face detection and observer.");
+    if (!observer || !fadeImagesToLeBron) {
+      startObserving();
+    }
   } else {
-    console.log("[Image Replacer] Disabling image replacement and restoring originals.");
-    stopObservingAndRestore();
+    console.log("[Image Replacer] Disabling face detection.");
+    // Only stop observer if fade mode is also off
+    if (!fadeImagesToLeBron) {
+      stopObservingAndRestore();
+    }
   }
 }
 
@@ -1114,10 +1156,21 @@ initMetricsTracking();
 initMetricsTracking();
 
 // Load initial settings
-chrome.storage.sync.get({ enabled: true, downloadsEnabled: true }, (result) => {
-  handleState(Boolean(result.enabled));
-  downloadsEnabled = Boolean(result.downloadsEnabled);
-  console.log(`[Image Replacer] Initial state - Downloads ${downloadsEnabled ? 'enabled' : 'disabled'}`);
+chrome.storage.sync.get({ enabled: true, fadeImagesToLeBron: false }, (result) => {
+  extensionEnabled = Boolean(result.enabled);
+  fadeImagesToLeBron = Boolean(result.fadeImagesToLeBron);
+  
+  console.log(`[Image Replacer] Initial state - Extension: ${extensionEnabled ? 'enabled' : 'disabled'}, Fade: ${fadeImagesToLeBron ? 'enabled' : 'disabled'}`);
+  
+  // Start observer if either face detection OR fade is enabled
+  if (extensionEnabled || fadeImagesToLeBron) {
+    startObserving();
+  }
+  
+  // If fade mode is enabled, immediately fade all images
+  if (fadeImagesToLeBron) {
+    fadeAllImagesToLeBronPermanent();
+  }
 });
 
 // Apply Google background immediately if on Google page
@@ -1132,14 +1185,46 @@ handleDirectImagePage();
 // Listen for toggle messages from popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "toggle-image-replacement") {
+    extensionEnabled = message.enabled;
     handleState(message.enabled);
     sendResponse({ status: "ok" });
     return true;
   }
   
-  if (message?.type === "toggle-downloads") {
-    downloadsEnabled = message.enabled;
-    console.log(`[Image Replacer] Downloads toggled to: ${downloadsEnabled ? 'enabled' : 'disabled'}`);
+  if (message?.type === "toggle-fade-images") {
+    const previousFade = fadeImagesToLeBron;
+    fadeImagesToLeBron = message.enabled;
+    console.log(`[Image Replacer] Fade to LeBron toggled to: ${fadeImagesToLeBron ? 'enabled' : 'disabled'}`);
+    
+    if (fadeImagesToLeBron) {
+      // When enabling fade, start observer if not already running
+      if (!observer) {
+        startObserving();
+      } else {
+        // Restart observer to ensure it's in fade mode
+        observer.disconnect();
+        observer = null;
+        startObserving();
+      }
+      
+      // Immediately start fading all images
+      console.log('[Image Replacer] Starting fade for all images...');
+      fadeAllImagesToLeBronPermanent();
+    } else if (!fadeImagesToLeBron && previousFade) {
+      // When disabling fade, only stop observer if face detection is also off
+      if (!extensionEnabled && observer) {
+        observer.disconnect();
+        observer = null;
+      } else if (extensionEnabled) {
+        // Restart observer in face detection mode
+        if (observer) {
+          observer.disconnect();
+          observer = null;
+        }
+        startObserving();
+      }
+    }
+    
     sendResponse({ status: "ok" });
     return true;
   }
@@ -1184,9 +1269,57 @@ function fadeImageToLeBron(img, delay = 0) {
 
 // Listen for storage changes (in case settings change from another tab)
 chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === 'sync' && changes.downloadsEnabled) {
-    downloadsEnabled = Boolean(changes.downloadsEnabled.newValue);
-    console.log(`[Image Replacer] Downloads updated from storage: ${downloadsEnabled ? 'enabled' : 'disabled'}`);
+  if (namespace === 'sync' && changes.fadeImagesToLeBron) {
+    const previousFade = fadeImagesToLeBron;
+    fadeImagesToLeBron = Boolean(changes.fadeImagesToLeBron.newValue);
+    console.log(`[Image Replacer] Fade to LeBron updated from storage: ${fadeImagesToLeBron ? 'enabled' : 'disabled'}`);
+    
+    if (fadeImagesToLeBron) {
+      // Start observer if not running
+      if (!observer) {
+        startObserving();
+      } else {
+        // Restart observer in fade mode
+        observer.disconnect();
+        observer = null;
+        startObserving();
+      }
+      
+      console.log('[Image Replacer] Starting fade from storage change...');
+      fadeAllImagesToLeBronPermanent();
+    } else if (!fadeImagesToLeBron && previousFade) {
+      // When disabling fade, only stop observer if face detection is also off
+      if (!extensionEnabled && observer) {
+        observer.disconnect();
+        observer = null;
+      } else if (extensionEnabled) {
+        // Restart in face detection mode
+        if (observer) {
+          observer.disconnect();
+          observer = null;
+        }
+        startObserving();
+      }
+    }
+  }
+  
+  if (namespace === 'sync' && changes.enabled) {
+    const previousEnabled = extensionEnabled;
+    extensionEnabled = Boolean(changes.enabled.newValue);
+    console.log(`[Image Replacer] Extension enabled state updated: ${extensionEnabled ? 'enabled' : 'disabled'}`);
+    
+    // Handle observer state based on both settings
+    if (extensionEnabled && !previousEnabled) {
+      // Face detection turned on - start observer if not already running for fade
+      if (!observer && !fadeImagesToLeBron) {
+        startObserving();
+      }
+    } else if (!extensionEnabled && previousEnabled) {
+      // Face detection turned off - only stop if fade is also off
+      if (!fadeImagesToLeBron && observer) {
+        stopObservingAndRestore();
+      }
+    }
   }
 });
 

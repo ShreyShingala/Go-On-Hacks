@@ -76,6 +76,26 @@
         gap: 6px;
       }
 
+      /* center-aligned fields (labels + inputs) */
+      .field-center {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: center;
+      }
+
+      .field-center label {
+        text-align: center;
+        width: 100%;
+      }
+
+      .field-center input {
+        text-align: center;
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+
       .button-row {
         display: flex;
         gap: 8px;
@@ -119,6 +139,7 @@
         min-height: 140px;
         line-height: 1.4;
         letter-spacing: 0.01em;
+        box-sizing: border-box;
       }
 
       .error {
@@ -131,6 +152,11 @@
         margin-top: 2px;
         min-height: 16px;
         margin-bottom: 8px;
+        /* Ensure long tweet text wraps and doesn't overflow the card */
+        white-space: normal;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+        box-sizing: border-box;
       }
       
       #reset {
@@ -194,11 +220,11 @@
   <body>
     <h1>Image Replacer</h1>
     <div class="card">
-      <div class="field">
+      <div class="field field-center">
         <label for="name">Creator name</label>
         <input id="name" type="text" placeholder="e.g. Goon Prophet" />
       </div>
-      <div class="field">
+      <div class="field field-center">
         <label for="handle">Twitter / X handle</label>
         <input id="handle" type="text" placeholder="@goon67" />
       </div>

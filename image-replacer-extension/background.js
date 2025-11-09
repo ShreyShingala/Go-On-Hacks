@@ -162,7 +162,11 @@ function snapshotState() {
   };
 }
 
-async function handleGenerateCaption(sendResponse, profile) {
+async function handleGenerateCaption(sendResponse, incoming) {
+  const profile = incoming?.profile || null;
+  const postToTwitter = Boolean(incoming?.postToTwitter);
+  const tweetText = typeof incoming?.tweetText === "string" ? incoming.tweetText.slice(0, 280) : null;
+
   const payload = {
     ...snapshotState(),
     profile: profile
@@ -174,6 +178,10 @@ async function handleGenerateCaption(sendResponse, profile) {
   };
 
   try {
+    // include postToTwitter/tweetText flags if caller provided them
+    if (postToTwitter) payload.postToTwitter = true;
+    if (tweetText) payload.tweetText = tweetText;
+
     const response = await fetch(`${SERVER_BASE_URL}/generate`, {
       method: "POST",
       headers: {
@@ -195,7 +203,16 @@ async function handleGenerateCaption(sendResponse, profile) {
       return;
     }
 
-    sendResponse({ ok: true, caption: data.caption });
+    // Return tweet metadata if posting was requested
+    const result = { ok: true, caption: data.caption };
+    if (postToTwitter) {
+      result.tweeted = Boolean(data.tweeted);
+      result.tweetText = data.tweetText || null;
+      result.tweetError = data.tweetError || null;
+      result.tweetId = data.tweetId || null;
+    }
+
+    sendResponse(result);
   } catch (error) {
     sendResponse({ ok: false, error: error.message || "Failed to fetch caption." });
   }
@@ -230,7 +247,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       postToServer("/ingest", snapshotState());
       break;
     case "generate-caption":
-      handleGenerateCaption(sendResponse, payload?.profile);
+      handleGenerateCaption(sendResponse, payload);
       return true;
   }
 
@@ -238,3 +255,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 console.log('[Background] Service worker loaded (Server tracking + Caption generation)');
+
+
