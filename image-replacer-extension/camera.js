@@ -1,34 +1,20 @@
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
 const stopButton = document.getElementById('stop');
 const errorDiv = document.getElementById('error');
 const statusDiv = document.getElementById('status');
 let stream = null;
-let handpose = null;
+let model = null;
 let isDetecting = false;
-
-const HAND_CONNECTIONS = [
-    [0, 1], [1, 2], [2, 3], [3, 4], // Thumb
-    [0, 5], [5, 6], [6, 7], [7, 8], // Index finger
-    [0, 9], [9, 10], [10, 11], [11, 12], // Middle finger
-    [0, 13], [13, 14], [14, 15], [15, 16], // Ring finger
-    [0, 17], [17, 18], [18, 19], [19, 20], // Pinky
-    [5, 9], [9, 13], [13, 17] // Palm connections
-  ];
-
-// Record hand positions, detect every 30 frames
-let previousHandPositions = [];
-const MOVEMENT_THRESHOLD = 30;
+let hands = [];
 
 async function startCamera() {
   try {
-    // Request camera access
     stream = await navigator.mediaDevices.getUserMedia({
       video: {
         width: { ideal: 1280 },
         height: { ideal: 720 },
-        facingMode: 'user' // Use front camera, change to 'environment' for back camera
+        facingMode: 'user'
       },
       audio: false
     });
@@ -36,11 +22,11 @@ async function startCamera() {
     video.srcObject = stream;
     // Set canvas size to match video when metadata loads
     video.addEventListener('loadedmetadata', () => {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        statusDiv.textContent = 'Camera started. Loading hand detection model...';
-        initHandDetection();
-      });
+      canvas.width = 1280;
+      canvas.height = 720;
+      statusDiv.textContent = 'Camera started. Loading hand detection model...';
+      initHandDetection();
+    });
 
     errorDiv.textContent = '';
     console.log('Camera started successfully');
@@ -51,327 +37,158 @@ async function startCamera() {
 }
 
 function stopCamera() {
+  // Stop the detection loop
+  isDetecting = false;
+  
+  // Stop camera stream
   if (stream) {
     stream.getTracks().forEach(track => track.stop());
     stream = null;
     video.srcObject = null;
     console.log('Camera stopped');
   }
+  
+  // Clear hands array
+  hands = [];
 }
 
 async function initHandDetection() {
-    try {
-      handpose = await ml5.handPose({
-        video: video,
-        flipHorizontal: true, // Mirror the video
-        maxNumHands: 2
-      });
-      
-      statusDiv.textContent = 'Hand detection model loaded! Move your hands to see detection.';
-      console.log('ml5.js HandPose initialized');
-      
+  try {
+    statusDiv.textContent = 'Loading Handtrack.js model...';
+    console.log('Loading Handtrack.js model...');
+    
+    // Load Handtrack.js model
+    const modelParams = {
+      flipHorizontal: true,
+      maxNumBoxes: 4,
+      scoreThreshold: 0.4,
+      iouThreshold: 0.3,
+    };
+    
+    model = await handTrack.load(modelParams);
+    
+    statusDiv.textContent = 'Hand detection model loaded! Move your hands to see detection.';
+    console.log('Handtrack.js model loaded:', model);
+    
+    // Wait for video to be ready
+    if (video.readyState >= 2) {
       detectHands();
-    } catch (err) {
-      console.error('Error initializing hand detection:', err);
-      errorDiv.textContent = `Hand detection error: ${err.message}`;
-      statusDiv.textContent = 'Camera active but hand detection failed.';
+    } else {
+      video.addEventListener('loadeddata', () => {
+        detectHands();
+      }, { once: true });
     }
+
+  } catch (err) {
+    console.error('Error initializing hand detection:', err);
+    errorDiv.textContent = `Hand detection error: ${err.message}`;
+    statusDiv.textContent = 'Camera active but hand detection failed.';
+  }
 }
 
 function detectHands() {
-    if (isDetecting) return;
-    isDetecting = true;
-    
-    function detect() {
-      if (!handpose || !stream) {
-        isDetecting = false;
-        return;
-      }
-      
-      // Detect hands in the current video frame - pass video element to detect()
-      handpose.detect(video, (results) => {
-        // Clear canvas
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        // Draw video frame on canvas
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        
-        if (results && results.length > 0) {
-          // Process each detected hand
-          results.forEach((hand, handIndex) => {
-            const landmarks = hand.keypoints;
-            
-            // Draw hand landmarks and connections
-            drawHand(landmarks);
-            
-            // Detect movement
-            detectHandMovement(landmarks, handIndex);
-          });
-          
-          statusDiv.textContent = `Detected ${results.length} hand(s). Move your hand to see movement tracking.`;
-          statusDiv.style.color = '#4CAF50';
-        } else {
-          // No hands detected
-          previousHandPositions = [];
-          statusDiv.textContent = 'No hands detected. Show your hands to the camera.';
-          statusDiv.style.color = '#FFA500';
-        }
-        
-        // Continue detection loop
-        if (isDetecting) {
-          requestAnimationFrame(detect);
-        }
-      });
-    }
-    
-    // Start detection loop
-    detect();
+  if (isDetecting) return;
+  if (!model || !stream) {
+    console.error('Model or stream not ready');
+    return;
   }
   
-  function drawHand(landmarks) {
-    // Draw connections (bones) with colors
-    ctx.strokeStyle = '#00FF00';
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    
-    HAND_CONNECTIONS.forEach(([start, end]) => {
-      const startPoint = landmarks[start];
-      const endPoint = landmarks[end];
-      
-      if (startPoint && endPoint) {
-        // Create gradient for each connection
-        const gradient = ctx.createLinearGradient(
-          startPoint.x, startPoint.y,
-          endPoint.x, endPoint.y
-        );
-        gradient.addColorStop(0, '#00FF00');
-        gradient.addColorStop(1, '#00CC00');
-        
-        ctx.strokeStyle = gradient;
-        ctx.beginPath();
-        ctx.moveTo(startPoint.x, startPoint.y);
-        ctx.lineTo(endPoint.x, endPoint.y);
-        ctx.stroke();
-      }
-    });
-    
-    // Draw joints (landmarks) with different sizes for different importance
-    landmarks.forEach((landmark, index) => {
-      // Different sizes for different joint types
-      let radius = 4;
-      let color = '#FF0000';
-      
-      // Wrist (index 0) - larger
-      if (index === 0) {
-        radius = 6;
-        color = '#FFFF00'; // Yellow for wrist
-      }
-      // Finger tips (4, 8, 12, 16, 20) - medium
-      else if ([4, 8, 12, 16, 20].includes(index)) {
-        radius = 5;
-        color = '#00FFFF'; // Cyan for fingertips
-      }
-      // MCP joints (5, 9, 13, 17) - medium
-      else if ([5, 9, 13, 17].includes(index)) {
-        radius = 4.5;
-        color = '#FF00FF'; // Magenta for knuckles
-      }
-      
-      // Draw joint circle with outline
-      ctx.fillStyle = color;
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.lineWidth = 1.5;
-      
-      ctx.beginPath();
-      ctx.arc(landmark.x, landmark.y, radius, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.stroke();
-      
-      // Draw joint numbers for better identification
-      ctx.fillStyle = '#FFFFFF';
-      ctx.font = '10px Arial';
-      ctx.textAlign = 'center';
-      ctx.fillText(index.toString(), landmark.x, landmark.y - radius - 5);
-    });
-    
-    // Draw hand bounding box for reference
-    if (landmarks.length > 0) {
-      const xs = landmarks.map(p => p.x);
-      const ys = landmarks.map(p => p.y);
-      const minX = Math.min(...xs);
-      const maxX = Math.max(...xs);
-      const minY = Math.min(...ys);
-      const maxY = Math.max(...ys);
-      
-      ctx.strokeStyle = 'rgba(255, 255, 0, 0.3)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([5, 5]);
-      ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
-      ctx.setLineDash([]);
-    }
-  }
+  isDetecting = true;
+  console.log('Starting hand detection...');
   
-  function detectHandMovement(currentLandmarks, handIndex) {
-    // Get or initialize previous positions for this hand
-    if (!previousHandPositions[handIndex]) {
-      previousHandPositions[handIndex] = currentLandmarks.map(landmark => ({
-        x: landmark.x,
-        y: landmark.y,
-        timestamp: Date.now()
-      }));
+  // Start detection loop
+  function runDetection() {
+    if (!isDetecting || !model || !stream) {
+      return;
+    }
+
+    if (!validateVideo()) {
+      console.warn('Skipping detection - video not ready');
+      if (isDetecting) {
+        requestAnimationFrame(runDetection);
+      }
       return;
     }
     
-    // Calculate movement for ALL key points (not just 3)
-    const keyPoints = [0, 4, 8, 12, 16, 20]; // wrist, all fingertips
-    let totalMovement = 0;
-    let maxMovement = 0;
-    let movementVectors = [];
-    
-    keyPoints.forEach(index => {
-      const current = {
-        x: currentLandmarks[index].x,
-        y: currentLandmarks[index].y
-      };
-      const previous = previousHandPositions[handIndex][index];
+    // Detect hands in the current video frame
+    model.detect(video).then(predictions => {
+
+      if (predictions.length > 0) {
+        console.log('Detection results:', predictions);
+      }
       
-      if (previous) {
-        const distance = Math.sqrt(
-          Math.pow(current.x - previous.x, 2) + 
-          Math.pow(current.y - previous.y, 2)
-        );
-        totalMovement += distance;
-        
-        if (distance > maxMovement) {
-          maxMovement = distance;
-        }
-        
-        // Store movement vector for visualization
-        if (distance > 5) { // Only show significant movements
-          movementVectors.push({
-            start: previous,
-            end: current,
-            distance: distance,
-            index: index
+      // Log each prediction to see its structure
+      if (predictions && predictions.length > 0) {
+        predictions.forEach((pred, idx) => {
+          console.log(`Prediction ${idx}:`, {
+            label: pred.label,
+            score: pred.score,
+            bbox: pred.bbox
           });
+        });
+      }
+      
+      // Filter to only include hand detections (open or closed)
+      // Handtrack.js should only return hands, but filter just in case
+      const handLabels = ['open', 'closed'];
+      const filteredHands = (predictions || []).filter(prediction => {
+        // Check if label exists and is a hand label
+        const label = prediction.label?.toLowerCase();
+        const isHand = label && handLabels.includes(label);
+        
+        if (!isHand && prediction.label) {
+          console.log('Filtered out non-hand detection:', prediction.label);
         }
+        
+        // If no label, assume it's a hand (Handtrack.js might not always include label)
+        return isHand || !prediction.label;
+      });
+        
+      // Store filtered results globally
+      hands = filteredHands;
+      
+      // Update status based on detection results
+      updateStatus();
+      
+      // Continue detection loop
+      if (isDetecting) {
+        requestAnimationFrame(runDetection);
+      }
+    }).catch(err => {
+      console.error('Detection error:', err);
+      if (isDetecting) {
+        requestAnimationFrame(runDetection);
       }
     });
-    
-    // Calculate average movement
-    const avgMovement = totalMovement / keyPoints.length;
-    
-    // Draw movement vectors on canvas
-    if (movementVectors.length > 0) {
-      drawMovementVectors(movementVectors, currentLandmarks);
-    }
-    
-    // Update status with detailed movement info
-    if (totalMovement > MOVEMENT_THRESHOLD) {
-      const timeDiff = Date.now() - (previousHandPositions[handIndex][0]?.timestamp || Date.now());
-      const movementSpeed = totalMovement / (timeDiff / 1000);
-      
-      statusDiv.textContent = `🚀 Movement detected! Total: ${Math.round(totalMovement)}px | Max: ${Math.round(maxMovement)}px | Speed: ${Math.round(movementSpeed)}px/s`;
-      statusDiv.style.color = '#FFD700'; // Gold color for movement
-      statusDiv.style.fontWeight = 'bold';
-      
-      // Trigger action on movement
-      onHandMovementDetected(totalMovement, handIndex, avgMovement, maxMovement);
-    } else {
-      statusDiv.textContent = `Hand detected. Movement: ${Math.round(avgMovement)}px (threshold: ${MOVEMENT_THRESHOLD}px)`;
-      statusDiv.style.color = '#4CAF50';
-      statusDiv.style.fontWeight = 'normal';
-    }
-    
-    // Update previous positions with timestamp
-    previousHandPositions[handIndex] = currentLandmarks.map(landmark => ({
-      x: landmark.x,
-      y: landmark.y,
-      timestamp: Date.now()
-    }));
   }
   
-  // New function to draw movement vectors
-  function drawMovementVectors(vectors, landmarks) {
-    vectors.forEach(({ start, end, distance, index }) => {
-      // Draw arrow showing movement direction
-      const dx = end.x - start.x;
-      const dy = end.y - start.y;
-      const angle = Math.atan2(dy, dx);
-      const arrowLength = Math.min(distance, 50); // Cap arrow length
-      
-      // Color based on movement speed
-      const intensity = Math.min(distance / 50, 1);
-      const red = Math.floor(255 * intensity);
-      const green = Math.floor(255 * (1 - intensity));
-      
-      ctx.strokeStyle = `rgb(${red}, ${green}, 0)`;
-      ctx.lineWidth = 2;
-      ctx.setLineDash([2, 2]);
-      
-      // Draw movement line
-      ctx.beginPath();
-      ctx.moveTo(start.x, start.y);
-      ctx.lineTo(end.x, end.y);
-      ctx.stroke();
-      
-      // Draw arrowhead
-      const arrowSize = 6;
-      ctx.beginPath();
-      ctx.moveTo(end.x, end.y);
-      ctx.lineTo(
-        end.x - arrowSize * Math.cos(angle - Math.PI / 6),
-        end.y - arrowSize * Math.sin(angle - Math.PI / 6)
-      );
-      ctx.moveTo(end.x, end.y);
-      ctx.lineTo(
-        end.x - arrowSize * Math.cos(angle + Math.PI / 6),
-        end.y - arrowSize * Math.sin(angle + Math.PI / 6)
-      );
-      ctx.stroke();
-      
-      ctx.setLineDash([]);
-      
-      // Draw movement magnitude indicator
-      ctx.fillStyle = `rgba(${red}, ${green}, 0, 0.7)`;
-      ctx.font = '10px Arial';
-      ctx.textAlign = 'center';
-      ctx.fillText(
-        `${Math.round(distance)}px`,
-        (start.x + end.x) / 2,
-        (start.y + end.y) / 2 - 5
-      );
-    });
+  // Start detection
+  runDetection();
+}
+
+// Update status based on detection results (no drawing)
+function updateStatus() {
+  if (!stream || !model) {
+    return;
   }
   
-  function onHandMovementDetected(movementAmount, handIndex, avgMovement, maxMovement) {
-    // This is where you can add custom actions
-    console.log(`Hand ${handIndex} movement detected:`, {
-      total: movementAmount,
-      average: avgMovement,
-      max: maxMovement
+  if (hands && hands.length > 0) {
+    console.log(`✅ Detected ${hands.length} hand(s)`);
+    
+    // Log details for each detected hand
+    hands.forEach((prediction, handIndex) => {
+      const label = prediction.label?.toLowerCase() || 'hand';
+      const score = Math.round((prediction.score || 0) * 100);
+      const [x, y, width, height] = prediction.bbox;
+      console.log(`  Hand ${handIndex}: ${label} (${score}%) at [${Math.round(x)}, ${Math.round(y)}, ${Math.round(width)}x${Math.round(height)}]`);
     });
     
-    // Example: Send message to background script
-    // chrome.runtime.sendMessage({
-    //   type: 'hand-movement-detected',
-    //   movement: movementAmount,
-    //   avgMovement: avgMovement,
-    //   maxMovement: maxMovement,
-    //   handIndex: handIndex
-    // });
-    
-    // Example: Send message to content script
-    // chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    //   if (tabs[0]?.id) {
-    //     chrome.tabs.sendMessage(tabs[0].id, {
-    //       type: 'hand-movement',
-    //       movement: movementAmount,
-    //       avgMovement: avgMovement,
-    //       maxMovement: maxMovement
-    //     });
-    //   }
-    // });
+    statusDiv.textContent = `✅ Detected ${hands.length} hand(s) - Check console for details`;
+    statusDiv.style.color = '#4CAF50';
+  } else {
+    statusDiv.textContent = 'No hands detected. Show your hands to the camera.';
+    statusDiv.style.color = '#FFA500';
+  }
 }
 
 stopButton.addEventListener('click', () => {
@@ -387,4 +204,43 @@ window.addEventListener('beforeunload', () => {
   stopCamera();
 });
 
-
+// Check if the input video is valid
+function validateVideo() {
+  const checks = {
+    videoExists: !!video,
+    hasSrcObject: !!(video && video.srcObject),
+    isPlaying: !!(video && !video.paused && !video.ended),
+    hasDimensions: !!(video && video.videoWidth > 0 && video.videoHeight > 0),
+    readyState: video ? video.readyState : 0,
+    streamActive: !!(stream && stream.active),
+    streamTracks: stream ? stream.getVideoTracks().length : 0
+  };
+  
+  const videoInfo = {
+    readyState: video?.readyState, // 0=HAVE_NOTHING, 1=HAVE_METADATA, 2=HAVE_CURRENT_DATA, 3=HAVE_FUTURE_DATA, 4=HAVE_ENOUGH_DATA
+    paused: video?.paused,
+    ended: video?.ended,
+    videoWidth: video?.videoWidth,
+    videoHeight: video?.videoHeight,
+    srcObject: video?.srcObject ? 'present' : 'null',
+    currentTime: video?.currentTime,
+    duration: video?.duration
+  };
+  
+  console.log('📹 Video Validation:', checks);
+  console.log('📹 Video Info:', videoInfo);
+  
+  // Check if video is valid for detection
+  const isValid = checks.videoExists && 
+                   checks.hasSrcObject && 
+                   checks.hasDimensions && 
+                   checks.readyState >= 2 && 
+                   checks.streamActive;
+  
+  if (!isValid) {
+    console.warn('⚠️ Video is NOT valid for detection:', {
+      missing: Object.entries(checks)
+        .filter(([key, value]) => !value)
+        .map(([key]) => key)
+    });
+  }}
