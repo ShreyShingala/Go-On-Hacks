@@ -1085,21 +1085,21 @@ async function processImageIndividually(img) {
       replaceImageElement(img, result.dataUrl);
       console.log('[Image Replacer] ✅ LeBron applied to new image:', img.src.substring(0, 50));
       
-      if (downloadsEnabled) {
-        try {
-          chrome.runtime.sendMessage({
-            type: 'save-detected-image',
-            dataUrl: result.dataUrl,
-            originalSrc: img.currentSrc || img.src
-          }, (response) => {
-            if (response && response.success) {
-              console.log('[Image Replacer] Saved detected face image to downloads');
-            }
-          });
-        } catch (e) {
-          console.error('[Image Replacer] Error saving image:', e);
-        }
-      }
+      // if (downloadsEnabled) {
+      //   try {
+      //     chrome.runtime.sendMessage({
+      //       type: 'save-detected-image',
+      //       dataUrl: result.dataUrl,
+      //       originalSrc: img.currentSrc || img.src
+      //     }, (response) => {
+      //       if (response && response.success) {
+      //         console.log('[Image Replacer] Saved detected face image to downloads');
+      //       }
+      //     });
+      //   } catch (e) {
+      //     console.error('[Image Replacer] Error saving image:', e);
+      //   }
+      // }
     } else {
       try {
         img.classList.add(NO_PERSON_FLAG);

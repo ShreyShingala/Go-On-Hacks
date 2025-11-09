@@ -18,6 +18,12 @@ h1 {
   letter-spacing: 0.02em;
 }
 
+h2 {
+  font-size: 16px;
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+
 .card {
   background: rgba(15, 20, 32, 0.85);
   border: 1px solid rgba(99, 102, 241, 0.35);
@@ -28,6 +34,10 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.card-spacing {
+  margin-top: 12px;
 }
 
 label {
@@ -46,6 +56,7 @@ textarea {
   color: #f5f5f5;
   padding: 10px;
   font-size: 14px;
+  box-sizing: border-box;
 }
 
 input:focus,
@@ -60,9 +71,30 @@ textarea:focus {
   gap: 6px;
 }
 
-.button-row {
+.field-center {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+}
+
+.field-center label {
+  text-align: center;
+  width: 100%;
+}
+
+.field-center input {
+  text-align: center;
+}
+
+.button-row,
+.action-buttons {
   display: flex;
   gap: 8px;
+}
+
+.action-buttons button {
+  flex: 1;
 }
 
 button {
@@ -89,6 +121,15 @@ button:not(:disabled):hover {
   filter: brightness(1.05);
 }
 
+#tweetNow {
+  background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+  color: #071019;
+}
+
+#fadeImages {
+  background: linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%);
+}
+
 textarea {
   resize: vertical;
   min-height: 140px;
@@ -106,12 +147,18 @@ textarea {
   margin-top: 2px;
   min-height: 16px;
   margin-bottom: 8px;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+#tweetInfo {
+  display: none;
 }
 
 #reset {
   background-color: #f44336;
   color: white;
-  border: none;
 }
 
 #reset:hover {
@@ -119,9 +166,8 @@ textarea {
 }
 
 #openDownloads {
-  background-color: #4CAF50;
+  background-color: #4caf50;
   color: white;
-  border: none;
 }
 
 #openDownloads:hover {
@@ -165,7 +211,6 @@ textarea {
   margin-top: 4px;
 }
 
-/* Camera view styles */
 #cameraVideo {
   max-height: 300px;
   object-fit: cover;
@@ -175,17 +220,5 @@ textarea {
 
 #cameraView {
   transition: all 0.3s ease;
-}
-
-/* Card spacing utility */
-.card-spacing {
-  margin-top: 12px;
-}
-
-/* Heading styles */
-h2 {
-  font-size: 16px;
-  margin: 0 0 12px;
-  font-weight: 600;
 }
 
