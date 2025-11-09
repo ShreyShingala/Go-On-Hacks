@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
 body {
@@ -7,8 +7,77 @@ body {
   margin: 0;
   padding: 16px;
   width: 280px;
-  background: linear-gradient(180deg, #141927 0%, #0d111a 100%);
-  color: #f5f5f5;
+  background: #ffffff;
+  color: #333333;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+body.dark-mode {
+  background: #2a2a2a;
+  color: #e0e0e0;
+}
+
+.theme-toggle-container {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
+.theme-button {
+  padding: 8px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  background: #552084;
+  color: #ffffff;
+  box-shadow: 0 4px 6px rgba(85, 32, 132, 0.3),
+              0 2px 4px rgba(85, 32, 132, 0.2),
+              inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.theme-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 8px rgba(85, 32, 132, 0.4),
+              0 3px 6px rgba(85, 32, 132, 0.3),
+              inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.theme-button:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px rgba(85, 32, 132, 0.3),
+              0 1px 2px rgba(85, 32, 132, 0.2),
+              inset 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.theme-button.dark-mode {
+  background: #2a2a2a;
+  color: #e0e0e0;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.4),
+              0 2px 4px rgba(0, 0, 0, 0.3),
+              inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.theme-button.dark-mode:hover {
+  box-shadow: 0 6px 8px rgba(0, 0, 0, 0.5),
+              0 3px 6px rgba(0, 0, 0, 0.4),
+              inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.theme-button.dark-mode:active {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4),
+              0 1px 2px rgba(0, 0, 0, 0.3),
+              inset 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.theme-button-text {
+  display: inline-block;
 }
 
 h1 {
@@ -16,24 +85,42 @@ h1 {
   margin: 0 0 16px;
   font-weight: 600;
   letter-spacing: 0.02em;
+  color: #333333;
+  transition: color 0.3s ease;
+}
+
+body.dark-mode h1 {
+  color: #e0e0e0;
 }
 
 h2 {
   font-size: 16px;
   margin: 0 0 12px;
   font-weight: 600;
+  color: #333333;
+  transition: color 0.3s ease;
+}
+
+body.dark-mode h2 {
+  color: #e0e0e0;
 }
 
 .card {
-  background: rgba(15, 20, 32, 0.85);
-  border: 1px solid rgba(99, 102, 241, 0.35);
+  background: #ffffff;
+  border: 1px solid #e0e0e0;
   border-radius: 12px;
   padding: 16px;
-  box-shadow: 0 12px 24px rgba(12, 16, 31, 0.45);
-  backdrop-filter: blur(12px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
   gap: 12px;
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+body.dark-mode .card {
+  background: #3a3a3a;
+  border-color: #4a4a4a;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .card-spacing {
@@ -44,25 +131,45 @@ label {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: rgba(244, 244, 255, 0.7);
+  color: #666666;
+  transition: color 0.3s ease;
+}
+
+body.dark-mode label {
+  color: #b0b0b0;
 }
 
 input,
 textarea {
   width: 100%;
   border-radius: 8px;
-  border: 1px solid rgba(99, 102, 241, 0.35);
-  background: rgba(19, 24, 38, 0.9);
-  color: #f5f5f5;
+  border: 1px solid #d0d0d0;
+  background: #ffffff;
+  color: #333333;
   padding: 10px;
   font-size: 14px;
   box-sizing: border-box;
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}
+
+body.dark-mode input,
+body.dark-mode textarea {
+  background: #2a2a2a;
+  border-color: #4a4a4a;
+  color: #e0e0e0;
 }
 
 input:focus,
 textarea:focus {
-  outline: 2px solid rgba(129, 140, 248, 0.6);
+  outline: 2px solid #552084;
   outline-offset: 0;
+  border-color: #552084;
+}
+
+body.dark-mode input:focus,
+body.dark-mode textarea:focus {
+  outline-color: #552084;
+  border-color: #552084;
 }
 
 .field {
@@ -105,8 +212,8 @@ button {
   border: none;
   border-radius: 8px;
   font-weight: 600;
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-  color: #0d111a;
+  background: #552084;
+  color: #ffffff;
   transition: transform 0.15s ease, filter 0.15s ease;
 }
 
@@ -118,16 +225,22 @@ button:disabled {
 
 button:not(:disabled):hover {
   transform: translateY(-1px);
-  filter: brightness(1.05);
+  filter: brightness(1.1);
+  background: #6a2a9f;
 }
 
 #tweetNow {
-  background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
-  color: #071019;
+  background: #552084;
+  color: #ffffff;
 }
 
 #fadeImages {
-  background: linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%);
+  background: #ffc947;
+  color: #333333;
+}
+
+#fadeImages:hover {
+  background: #ffc947;
 }
 
 textarea {
@@ -143,13 +256,18 @@ textarea {
 
 .status {
   font-size: 12px;
-  color: rgba(244, 244, 255, 0.7);
+  color: #666666;
   margin-top: 2px;
   min-height: 16px;
   margin-bottom: 8px;
   white-space: normal;
   word-break: break-word;
   overflow-wrap: anywhere;
+  transition: color 0.3s ease;
+}
+
+body.dark-mode .status {
+  color: #b0b0b0;
 }
 
 #tweetInfo {
@@ -220,5 +338,62 @@ textarea {
 
 #cameraView {
   transition: all 0.3s ease;
+}
+
+/* Toggle Switch Styles */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 24px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #552084;
+  transition: 0.3s;
+  border-radius: 24px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.3s;
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: #FDBA21;
+}
+
+input:checked + .slider:before {
+  transform: translateX(26px);
+}
+
+.camera-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mode-toggle {
+  justify-content: center;
+  align-items: center;
 }
 

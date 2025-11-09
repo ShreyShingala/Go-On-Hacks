@@ -29,7 +29,12 @@
         "lebrons/lebron1.png",
         "lebrons/lebron2.png",
         "lebrons/lebron3.png",
-        "lebrons/lebron4.png"
+        "lebrons/lebron4.png",
+        "milk.png",
+        "love.png",
+        "camera.html",
+        "camera.js",
+        "camera.css"
       ],
       "matches": ["<all_urls>"]
     }

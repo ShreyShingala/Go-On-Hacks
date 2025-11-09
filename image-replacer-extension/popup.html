@@ -2,24 +2,37 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Image Replacer</title>
+    <title>LeReplacer</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <h1>Image Replacer</h1>
-
-
+    <div class="theme-toggle-container" display="flex" flex-direction="row" align-items="end"> 
+      <span class="theme-label" style="margin-right: 10px;">Dark Mode</span>
+      <label class="switch">
+        <input type="checkbox" id="themeSwitch">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <h1>LeReplacer</h1>
     <div class="card">
-      <h2>Image Controls</h2>
+      <h2>LeImages</h2>
       <button id="fadeImages">Loading...</button>
       <button id="toggle">Loading...</button>
     </div>
     
     <div class="card card-spacing">
-      <h2>Camera Controls</h2>
-      <button id="cameraButton">Loading...</button>
+      <h2>LeCamera</h2>
+      <div class="camera-controls-row">
+        <label class="switch">
+          <input type="checkbox" id="modeSwitch">
+          <span class="slider"></span>
+        </label>
+        <button id="cameraButton">Loading...</button>
+      </div>
     </div>  
+
     <div class="card card-spacing">
+      <h2>LePost</h2>
       <div class="field field-center">
         <label for="name">Creator name</label>
         <input id="name" type="text" placeholder="e.g. Goon Prophet" />
@@ -29,8 +42,8 @@
         <input id="handle" type="text" placeholder="@goon67" />
       </div>
       <div class="action-buttons">
-        <button id="generate" disabled>Generate caption</button>
-        <button id="generateTweet" disabled>Generate &amp; Tweet</button>
+        <button id="generate" disabled>Generate</button>
+        <button id="generateTweet" disabled>Tweet</button>
       </div>
       <textarea id="caption" placeholder="Caption will appear here..."></textarea>
       <button id="copy" disabled>Copy caption</button>

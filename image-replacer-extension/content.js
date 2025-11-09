@@ -1323,3 +1323,199 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
   }
 });
 
+let milkOverlay = null;
+let loveOverlay = null;
+let milkOverlayVisible = false;
+let loveOverlayVisible = false;
+let milkHideTimeout = null;
+let loveHideTimeout = null;
+
+// Create milk overlay element
+function createOverlay(mode) {
+  // Check if overlay already exists
+  if (mode === 'milk' && milkOverlay) return milkOverlay;
+  if (mode === 'love' && loveOverlay) return loveOverlay;
+  
+  const overlay = document.createElement('img');
+  overlay.id = `extension-${mode}-overlay`;
+  overlay.src = chrome.runtime.getURL(`${mode}.png`);
+
+  overlay.style.cssText = `
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    object-fit: cover !important;
+    z-index: 999999999 !important;
+    pointer-events: none !important;
+    opacity: 0;
+    transition: opacity 0.3s ease !important;
+    display: block !important;
+  `;
+  document.body.appendChild(overlay);
+  
+  // Assign to the correct variable based on mode
+  if (mode === 'milk') {
+    milkOverlay = overlay;
+  } else if (mode === 'love') {
+    loveOverlay = overlay;
+  }
+  
+  return overlay;
+}
+
+// Show milk overlay
+function showMilkOverlay() {
+  // Clear any existing timeout
+  if (milkHideTimeout) {
+    clearTimeout(milkHideTimeout);
+    milkHideTimeout = null;
+  }
+  // Hide love overlay if visible
+  hideLoveOverlay();
+  
+  if (!milkOverlay) {
+    milkOverlay = createOverlay('milk');
+  }
+  if (milkOverlay) {
+    // Ensure overlay is visible
+    milkOverlay.style.display = 'block';
+    milkOverlay.style.opacity = '1';
+    milkOverlayVisible = true;
+  }
+}
+
+// Show love overlay
+function showLoveOverlay() {
+  // Clear any existing timeout
+  if (loveHideTimeout) {
+    clearTimeout(loveHideTimeout);
+    loveHideTimeout = null;
+  }
+  // Hide milk overlay if visible
+  hideMilkOverlay();
+  
+  if (!loveOverlay) {
+    loveOverlay = createOverlay('love');
+  }
+  if (loveOverlay) {
+    // Ensure overlay is visible
+    loveOverlay.style.display = 'block';
+    loveOverlay.style.opacity = '1';
+    loveOverlayVisible = true;
+  }
+}
+
+// Hide milk overlay
+function hideMilkOverlay() {
+  if (milkHideTimeout) {
+    clearTimeout(milkHideTimeout);
+    milkHideTimeout = null;
+  }
+  if (milkOverlay) {
+    milkOverlay.style.opacity = '0';
+    milkOverlayVisible = false;
+    setTimeout(() => {
+      if (milkOverlay && !milkOverlayVisible) {
+        milkOverlay.style.display = 'none';
+      }
+    }, 300);
+  }
+}
+
+// Hide love overlay
+function hideLoveOverlay() {
+  if (loveHideTimeout) {
+    clearTimeout(loveHideTimeout);
+    loveHideTimeout = null;
+  }
+  if (loveOverlay) {
+    loveOverlay.style.opacity = '0';
+    loveOverlayVisible = false;
+    setTimeout(() => {
+      if (loveOverlay && !loveOverlayVisible) {
+        loveOverlay.style.display = 'none';
+      }
+    }, 300);
+  }
+}
+
+// Handle showing overlay based on type
+function handleShowOverlay(overlayType) {
+  if (overlayType === 'safe') {
+    showLoveOverlay();
+    loveHideTimeout = setTimeout(() => {
+      hideLoveOverlay();
+      loveHideTimeout = null;
+    }, 15000);
+  } else { // 'unsafe' or default
+    showMilkOverlay();
+    milkHideTimeout = setTimeout(() => {
+      hideMilkOverlay();
+      milkHideTimeout = null;
+    }, 15000);
+  }
+}
+
+// Listen for messages from camera window
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'showOverlay') {
+    handleShowOverlay(message.overlayType || 'unsafe');
+  } else if (message.action === 'hideOverlay') {
+    hideMilkOverlay();
+    hideLoveOverlay();
+  } else if (message.action === 'showMilk') {
+    // Legacy support
+    handleShowOverlay('unsafe');
+  } else if (message.action === 'hideMilk') {
+    hideMilkOverlay();
+  }
+});
+
+// Also listen to chrome.storage for cross-tab synchronization
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local' && changes.showOverlay) {
+    if (changes.showOverlay.newValue === true) {
+      const overlayType = changes.overlayType?.newValue || 'unsafe';
+      handleShowOverlay(overlayType);
+    } else {
+      hideMilkOverlay();
+      hideLoveOverlay();
+    }
+  }
+});
+
+// Check storage on page load in case we missed the message
+chrome.storage.local.get(['showOverlay', 'overlayType', 'overlayTimestamp'], (result) => {
+  if (result.showOverlay && result.overlayTimestamp && result.overlayType) {
+    const timeSince = Date.now() - result.overlayTimestamp;
+    if (timeSince < 15000) {
+      handleShowOverlay(result.overlayType);
+      // Adjust timeout for remaining time
+      if (result.overlayType === 'safe') {
+        loveHideTimeout = setTimeout(() => {
+          hideLoveOverlay();
+          loveHideTimeout = null;
+        }, 15000 - timeSince);
+      } else {
+        milkHideTimeout = setTimeout(() => {
+          hideMilkOverlay();
+          milkHideTimeout = null;
+        }, 15000 - timeSince);
+      }
+    }
+  }
+});
+
+// Ensure overlays are created when DOM is ready
+if (document.body) {
+  milkOverlay = createOverlay('milk');
+  loveOverlay = createOverlay('love');
+} else {
+  document.addEventListener('DOMContentLoaded', () => {
+    milkOverlay = createOverlay('milk');
+    loveOverlay = createOverlay('love');
+  });
+}
+

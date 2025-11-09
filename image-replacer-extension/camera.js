@@ -11,11 +11,14 @@ let stream = null;
 let model = null;
 let isDetecting = false;
 let handPositionHistory = [];
-const HISTORY_LENGTH = 30;
-const STROKE_DETECTION_THRESHOLD = 10;
+const HISTORY_LENGTH = 30; // Increased for better detection
+
+const STROKE_DETECTION_THRESHOLD = 80; 
+const MIN_STROKE_DISTANCE = 100;
+const NOISE_THRESHOLD = 5;
+const MAX_STROKES = 10;
 let lastStrokeDirection = null;
 let strokeCount = 0;
-const MAX_STROKES = 20; // Number of strokes needed to fill the bar
 
 async function startCamera() {
   try {
@@ -23,7 +26,8 @@ async function startCamera() {
       video: {
         width: { ideal: 1280 },
         height: { ideal: 720 },
-        facingMode: 'user'
+        facingMode: 'user',
+        mirror: true,
       },
       audio: false
     });
@@ -60,6 +64,8 @@ function stopCamera() {
   handPositionHistory = [];
   strokeCount = 0;
   updateProgressBar();
+  hideOverlay('milk');
+  hideOverlay('love');
 }
 
 async function initHandDetection() {
@@ -146,7 +152,7 @@ function detectHands() {
             handPositionHistory.shift();
           }
 
-          if (handPositionHistory.length >= 5) {
+          if (handPositionHistory.length >= 10) {
             detectStrokingMotion();
           }
         });
@@ -228,38 +234,62 @@ function validateVideo() {
 }
 
 function detectStrokingMotion() {
-  if (handPositionHistory.length < 5) return;
+  if (handPositionHistory.length < 10) return;
   
-  // Get recent positions (last 5 frames)
-  const recent = handPositionHistory.slice(-5);
-  const currentY = recent[recent.length - 1][1];
-  const previousY = recent[0][1];
+  // Get recent positions (last 10 frames for better smoothing)
+  const recent = handPositionHistory.slice(-10);
+  const ys = recent.map(pos => pos[1]);
   
-  // Calculate Y movement
-  const yMovement = previousY - currentY; // Positive = moving up, Negative = moving down
-  
-  // Determine current direction
-  let currentDirection = null;
-  if (yMovement > STROKE_DETECTION_THRESHOLD) {
-    currentDirection = 'up';
-  } else if (yMovement < -STROKE_DETECTION_THRESHOLD) {
-    currentDirection = 'down';
-  }
-  
-  // Detect direction change (stroke completion)
-  if (currentDirection && lastStrokeDirection && currentDirection !== lastStrokeDirection) {
-    strokeCount++;
-    console.log(`🔄 STROKE DETECTED! Count: ${strokeCount}`);
-    updateProgressBar();
-    
-    // Check if bar is full
-    if (strokeCount >= MAX_STROKES) {
-      notifyBarFull();
+  // Calculate total vertical distance traveled (not just min-max)
+  let totalDistance = 0;
+  for (let i = 1; i < recent.length; i++) {
+    const distance = Math.abs(recent[i][1] - recent[i-1][1]);
+    // Only count significant movements (filter noise)
+    if (distance > NOISE_THRESHOLD) {
+      totalDistance += distance;
     }
   }
   
-  // Update last direction
-  if (currentDirection) {
+  // Find the range of movement
+  const highestY = Math.max(...ys);
+  const lowestY = Math.min(...ys);
+  const yRange = highestY - lowestY;
+  
+  // Require both: significant range AND sufficient total distance
+  if (yRange < STROKE_DETECTION_THRESHOLD || totalDistance < MIN_STROKE_DISTANCE) {
+    return; // Not a big enough stroke
+  }
+  
+  // Determine direction based on where the hand started vs ended
+  const startY = recent[0][1];
+  const endY = recent[recent.length - 1][1];
+  const yDiff = startY - endY; // Positive = moved up, Negative = moved down
+  
+  let currentDirection = null;
+  if (Math.abs(yDiff) > STROKE_DETECTION_THRESHOLD / 2) {
+    currentDirection = yDiff > 0 ? 'up' : 'down';
+  }
+  
+  // Only count stroke if direction changed AND it was a significant movement
+  if (currentDirection && lastStrokeDirection && currentDirection !== lastStrokeDirection) {
+    // Additional check: make sure we're not just jittering
+    // The hand should have moved a significant distance in the new direction
+    const recentMovement = Math.abs(endY - startY);
+    if (recentMovement > STROKE_DETECTION_THRESHOLD / 2) {
+      strokeCount++;
+      console.log(`🔄 STROKE DETECTED! Count: ${strokeCount} | Range: ${Math.round(yRange)}px | Distance: ${Math.round(totalDistance)}px`);
+      updateProgressBar();
+      
+      // Check if bar is full
+      if (strokeCount >= MAX_STROKES) {
+        notifyBarFull();
+      }
+      
+      // Reset direction tracking after stroke to prevent double-counting
+      lastStrokeDirection = null;
+    }
+  } else if (currentDirection) {
+    // Update direction only if movement is significant
     lastStrokeDirection = currentDirection;
   }
 }
@@ -283,22 +313,104 @@ function updateProgressBar() {
 }
 
 // Notify user when bar is full
-function notifyBarFull() {
-  // Show notification
-  const notification = document.getElementById('notification');
-  if (notification) {
-    notification.style.display = 'block';
-    notification.textContent = 'LEBRON BUSTED!';
-    
-    // Hide after 3 seconds
-    setTimeout(() => {
-      notification.style.display = 'none';
-    }, 3000);
+async function notifyBarFull() {
+  // Get current mode from storage
+  const data = await chrome.storage.sync.get('cameraMode');
+  const currentMode = data.cameraMode || 'unsafe'; // Default to unsafe
+  
+  // Focus the camera window
+  focusCameraWindow();
+  
+  // Show appropriate overlay based on mode
+  if (currentMode === 'safe') {
+    showOverlay('love');
+  } else {
+    showOverlay('milk');
   }
   
-  // Reset counter after notification
+  // Signal all browser pages to show the correct overlay
+  signalOverlayToAllPages(currentMode);
+  
+  // Reset counter immediately so user can stroke again
+  strokeCount = 0;
+  updateProgressBar();
+  
+  // Hide overlays after 15 seconds
   setTimeout(() => {
-    strokeCount = 0;
-    updateProgressBar();
-  }, 3000);
+    hideMilkOverlay();
+    hideLoveOverlay();
+  }, 15000);
+}
+
+function hideOverlay(mode) {
+  const overlay = document.getElementById(`${mode}Overlay`);
+  if (overlay) {
+    overlay.style.opacity = '0';
+    setTimeout(() => {
+      overlay.style.display = 'none';
+    }, 500);
+  }
+}
+
+function showOverlay(mode) {
+  const overlay = document.getElementById(`${mode}Overlay`);
+  if (overlay) {
+    overlay.style.display = 'block';
+    overlay.style.opacity = '1';
+  }
+}
+
+// Focus the camera window
+function focusCameraWindow() {
+  // Try to focus using window.focus() first
+  if (window) {
+    window.focus();
+  }
+  
+  // Also use chrome.windows API if available
+  if (typeof chrome !== 'undefined' && chrome.windows) {
+    chrome.windows.getCurrent((win) => {
+      if (win) {
+        chrome.windows.update(win.id, { focused: true });
+      }
+    });
+  }
+}
+
+// Signal all browser pages to show overlay (milk or love based on mode)
+function signalOverlayToAllPages(mode) {
+  // Use chrome.storage to signal all content scripts
+  if (typeof chrome !== 'undefined' && chrome.storage) {
+    chrome.storage.local.set({ 
+      showOverlay: true,
+      overlayType: mode, // 'safe' or 'unsafe'
+      overlayTimestamp: Date.now() 
+    }, () => {
+      // Broadcast to all tabs
+      chrome.tabs.query({}, (tabs) => {
+        tabs.forEach(tab => {
+          chrome.tabs.sendMessage(tab.id, { 
+            action: 'showOverlay',
+            overlayType: mode,
+            timestamp: Date.now()
+          }).catch(() => {
+            // Ignore errors for tabs that don't have content script
+          });
+        });
+      });
+    });
+    
+    // Auto-hide after 15 seconds
+    setTimeout(() => {
+      chrome.storage.local.set({ showOverlay: false }, () => {
+        chrome.tabs.query({}, (tabs) => {
+          tabs.forEach(tab => {
+            chrome.tabs.sendMessage(tab.id, { 
+              action: 'hideOverlay'
+            }).catch(() => {});
+          });
+        });
+      });
+    }, 15000);
+  }
 }

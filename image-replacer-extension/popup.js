@@ -11,6 +11,8 @@ const handleInput = document.getElementById("handle");
 const fadeImagesButton = document.getElementById("fadeImages");
 
 const cameraButton = document.getElementById("cameraButton");
+const modeSwitch = document.getElementById("modeSwitch");
+const themeSwitch = document.getElementById("themeSwitch");
 
 function updateToggleButton(enabled) {
   toggleButton.textContent = enabled ? "Disable face detection" : "Enable face detection";
@@ -48,11 +50,11 @@ function getActiveTab() {
 function resetActionButtons() {
   if (generateButton) {
     generateButton.disabled = false;
-    generateButton.textContent = "Generate caption";
+    generateButton.textContent = "Generate";
   }
   if (tweetButton) {
     tweetButton.disabled = false;
-    tweetButton.textContent = "Generate & Tweet";
+    tweetButton.textContent = "Tweet";
   }
   if (tweetNowButton) {
     tweetNowButton.disabled = !captionField?.value?.trim();
@@ -83,12 +85,47 @@ function cacheProfile() {
   if (handleInput) handleInput.value = handle;
 }
 
-chrome.storage.sync.get({ enabled: true, creatorName: "", creatorHandle: "", fadeImagesToLeBron: false }, (result) => {
+// Function to apply theme
+function applyTheme(isDarkMode) {
+  if (isDarkMode) {
+    document.body.classList.add('dark-mode');
+    if (themeSwitch) {
+      themeSwitch.classList.add('dark-mode');
+      const textSpan = themeSwitch.querySelector('.theme-button-text');
+      if (textSpan) {
+        textSpan.textContent = 'Dark';
+      }
+    }
+  } else {
+    document.body.classList.remove('dark-mode');
+    if (themeSwitch) {
+      themeSwitch.classList.remove('dark-mode');
+      const textSpan = themeSwitch.querySelector('.theme-button-text');
+      if (textSpan) {
+        textSpan.textContent = 'Light';
+      }
+    }
+  }
+}
+
+// Load and apply theme
+chrome.storage.sync.get({ darkMode: false }, (result) => {
+  const isDarkMode = Boolean(result.darkMode);
+  applyTheme(isDarkMode);
+});
+
+chrome.storage.sync.get({ enabled: true, creatorName: "", creatorHandle: "", fadeImagesToLeBron: false, cameraMode: "unsafe" }, (result) => {
   const enabled = Boolean(result.enabled);
   const fadeImagesToLeBron = Boolean(result.fadeImagesToLeBron);
+  const cameraMode = result.cameraMode || "unsafe"; // Default to unsafe
   
   updateToggleButton(enabled);
   updateFadeImagesButton(fadeImagesToLeBron);
+  
+  // Set mode switch (checked = safe mode)
+  if (modeSwitch) {
+    modeSwitch.checked = cameraMode === "safe";
+  }
   
   toggleButton.disabled = false;
   resetActionButtons();
@@ -306,5 +343,23 @@ captionField?.addEventListener("input", () => {
   const has = Boolean(captionField.value.trim());
   if (copyButton) copyButton.disabled = !has;
   if (tweetNowButton) tweetNowButton.disabled = !has;
+});
+
+// Handle mode switch toggle (Safe/Unsafe)
+modeSwitch?.addEventListener("change", () => {
+  const mode = modeSwitch.checked ? "safe" : "unsafe";
+  chrome.storage.sync.set({ cameraMode: mode }, () => {
+    console.log(`Camera mode set to: ${mode}`);
+  });
+});
+
+// Handle theme button click (Light/Dark)
+themeSwitch?.addEventListener("click", () => {
+  const isCurrentlyDark = document.body.classList.contains('dark-mode');
+  const newDarkMode = !isCurrentlyDark;
+  chrome.storage.sync.set({ darkMode: newDarkMode }, () => {
+    applyTheme(newDarkMode);
+    console.log(`Theme set to: ${newDarkMode ? 'dark' : 'light'}`);
+  });
 });
 
