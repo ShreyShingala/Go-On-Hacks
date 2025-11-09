@@ -48,47 +48,6 @@ function isImagePage() {
   return /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(path);
 }
 
-async function handleDirectImagePage() {
-  if (!isImagePage()) return;
-  
-  const img = document.querySelector('img');
-  if (!img) return;
-  
-  console.log('[Image Replacer] Detected direct image page, processing...');
-  
-  // Wait for image to load
-  if (!img.complete) {
-    await new Promise(resolve => {
-      img.onload = resolve;
-      img.onerror = resolve;
-    });
-  }
-  
-  // Check for faces and replace
-  const result = await imageContainsFaceCached(img);
-  if (result.hasFace && result.dataUrl) {
-    replaceImageElement(img, result.dataUrl);
-    
-    // Save if downloads enabled
-    // if (downloadsEnabled) {
-    //   console.log('[Image Replacer] Downloads enabled - saving image');
-    //   try {
-    //     chrome.runtime.sendMessage({
-    //       type: 'save-detected-image',
-    //       dataUrl: result.dataUrl,
-    //       originalSrc: img.src
-    //     }, (response) => {
-    //       if (response && response.success) {
-    //         console.log('[Image Replacer] Saved detected image to downloads');
-    //       }
-    //     });
-    //   } catch (e) {
-    //     console.error('[Image Replacer] Error saving image:', e);
-    //   }
-    // }
-  }
-}
-
 function applyLeBronTheme() {
   // Inject LeBron-themed color scheme for ALL websites
   const style = document.createElement('style');
@@ -1179,9 +1138,6 @@ chrome.storage.sync.get({ enabled: true, fadeImagesToLeBron: false }, (result) =
 // Apply LeBron theme to ALL pages
 // applyLeBronTheme();
 
-// Handle direct image pages
-handleDirectImagePage();
-
 // Listen for toggle messages from popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "toggle-image-replacement") {
@@ -1231,13 +1187,68 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // Function to permanently fade all images to LeBron image (irreversible)
+// Conservative detector for images that effectively make up the full page.
+// Returns true for direct-image pages, the only image on the page, or
+// images that cover a large fraction of the viewport. This is intentionally
+// conservative to avoid replacing the whole tab with a LeBron image.
+function isFullPageImage(img) {
+  try {
+    if (!img || !(img instanceof HTMLImageElement)) return false;
+
+    // If page URL looks like an image file (visiting the image directly), treat as full-page
+    if (isImagePage()) return true;
+
+    // If this is the only image in the document, don't replace it
+    const allImages = document.images || [];
+    if (allImages.length === 1) return true;
+
+    const rect = img.getBoundingClientRect();
+    const vw = window.innerWidth || document.documentElement.clientWidth;
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+
+    if (rect.width <= 0 || rect.height <= 0 || vw <= 0 || vh <= 0) return false;
+
+    const viewportArea = vw * vh;
+    const imgArea = rect.width * rect.height;
+
+    // If the image covers more than 60% of the viewport area, consider it full-page
+    if (imgArea / viewportArea > 0.6) return true;
+
+    // If image spans most of viewport in both dimensions, also consider it full-page
+    if (rect.width >= vw * 0.9 && rect.height >= vh * 0.8) return true;
+
+    return false;
+  } catch (err) {
+    console.warn('[Image Replacer] isFullPageImage error:', err);
+    return false;
+  }
+}
+
 function fadeAllImagesToLeBronPermanent() {
   const lebronUrl = chrome.runtime.getURL(LEBRON);
   const images = Array.from(document.images || []);
-  
-  console.log(`[Image Replacer] Permanently fading ${images.length} images to LeBron`);
-  
+
+  // If this page is a direct image URL (e.g. visiting an image file), skip
+  // fading entirely to avoid turning the whole tab into LeBron.
+  if (isImagePage()) {
+    console.log('[Image Replacer] Skipping fadeAllImagesToLeBronPermanent on direct image page');
+    return;
+  }
+
+  console.log(`[Image Replacer] Permanently fading ${images.length} images to LeBron (skipping full-page images)`);
+
   images.forEach((img, index) => {
+    try {
+      if (isFullPageImage(img)) {
+        console.log('[Image Replacer] Skipping full-page image during fade:', img.src || img.currentSrc || '(no src)');
+        return;
+      }
+    } catch (e) {
+      // if detector fails, be conservative and skip changing this image
+      console.warn('[Image Replacer] isFullPageImage check failed, skipping image:', e);
+      return;
+    }
+
     fadeImageToLeBron(img, index * 50);
   });
 }
@@ -1247,6 +1258,16 @@ function fadeImageToLeBron(img, delay = 0) {
   const lebronUrl = chrome.runtime.getURL(LEBRON);
   
   setTimeout(() => {
+    // Safety: do not replace a full-page image (this would make the tab a single LeBron image)
+    try {
+      if (isFullPageImage(img)) {
+        console.log('[Image Replacer] Skipping fade for full-page image:', img.src || img.currentSrc || '(no src)');
+        return;
+      }
+    } catch (e) {
+      console.warn('[Image Replacer] isFullPageImage threw, skipping fade for image:', e);
+      return;
+    }
     // Set up CSS transition
     img.style.transition = `opacity ${FADE_TRANSITION_MS}ms ease-in-out`;
     
@@ -1332,49 +1353,73 @@ let loveHideTimeout = null;
 
 // Create milk overlay element
 function createOverlay(mode) {
-  // Check if overlay already exists
+  // If mode is 'milk' or 'love' we create a full-page overlay (covering the
+  // viewport). For other modes we create the small badge. This keeps milk/love
+  // as dramatic full-tab overlays while avoiding any full-page overlay for
+  // other uses.
   if (mode === 'milk' && milkOverlay) return milkOverlay;
   if (mode === 'love' && loveOverlay) return loveOverlay;
-  
-  // Ensure document.body exists
+
   if (!document.body) {
     console.error('[Content Script] document.body not available for overlay creation');
     return null;
   }
-  
+
   const overlay = document.createElement('img');
   overlay.id = `extension-${mode}-overlay`;
   overlay.src = chrome.runtime.getURL(`assets/${mode}.png`);
+  overlay.alt = mode;
 
-  overlay.style.cssText = `
-    position: fixed !important;
-    top: 0 !important;
-    left: 0 !important;
-    width: 100vw !important;
-    height: 100vh !important;
-    object-fit: cover !important;
-    z-index: 999999999 !important;
-    pointer-events: none !important;
-    opacity: 0;
-    transition: opacity 0.3s ease !important;
-    display: block !important;
-  `;
-  
+  const isFullPage = mode === 'milk' || mode === 'love';
+
+  if (isFullPage) {
+    // Full-viewport overlay (covers the entire tab)
+    overlay.style.cssText = `
+      position: fixed !important;
+      top: 0 !important;
+      left: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      object-fit: cover !important;
+      z-index: 999999999 !important;
+      pointer-events: none !important;
+      opacity: 0;
+      transition: opacity 0.3s ease !important;
+      display: block !important;
+    `;
+  } else {
+    // Small floating badge in the top-right corner
+    overlay.style.cssText = `
+      position: fixed !important;
+      top: 12px !important;
+      right: 12px !important;
+      width: 160px !important;
+      height: auto !important;
+      object-fit: contain !important;
+      z-index: 99999999 !important;
+      pointer-events: none !important;
+      opacity: 0;
+      transition: opacity 0.3s ease !important;
+      display: block !important;
+      border-radius: 8px !important;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.35) !important;
+    `;
+  }
+
   try {
     document.body.appendChild(overlay);
-    console.log('[Content Script] Created overlay element:', mode, overlay);
+    console.log('[Content Script] Created overlay element:', mode, overlay, 'fullPage=', isFullPage);
   } catch (err) {
     console.error('[Content Script] Failed to append overlay to body:', err);
     return null;
   }
-  
-  // Assign to the correct variable based on mode
+
   if (mode === 'milk') {
     milkOverlay = overlay;
   } else if (mode === 'love') {
     loveOverlay = overlay;
   }
-  
+
   return overlay;
 }
 
