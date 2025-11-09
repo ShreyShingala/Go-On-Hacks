@@ -27,7 +27,16 @@ Happy hacking with the Go On Hacks crew—see you at table 67!
 ### Server setup
 1. `cd local-server`
 2. `npm install`
-3. Create a `.env` file with `GEMINI_API_KEY=your_key_here` (67 characters optional but encouraged).
+3. Create a `.env` file containing:
+   - `GEMINI_API_KEY=your_key_here`
+   - `TWITTER_CLIENT_ID=your_app_client_id`
+   - `TWITTER_CLIENT_SECRET=your_app_client_secret`
+   - `TWITTER_CALLBACK_URL=https://localhost:3000/callback`
 4. `npm start` to run on port 5051 and keep the `/health` endpoint returning 67-level vibes.
+5. Open `http://localhost:5051/auth/start` in a browser, authorize the bot account, and wait for the success message. Tokens are stored in `local-server/tokenStore.json` (gitignored).
+
+### Autoposting captions
+- Click **Generate & Tweet** in the popup (or call `/generate` with `postToTwitter: true`) and the server will refresh tokens if needed, then fire the caption to the v2 `/tweets` endpoint.
+- Responses include `tweeted`, `tweetId`, `tweetText`, and `tweetError` so you can tell whether the post succeeded.
 
 If the server or API key goes missing, the popup will shout about it—no silent failures while you craft your next goon-tier 67 caption.

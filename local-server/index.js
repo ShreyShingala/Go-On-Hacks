@@ -1,9 +1,18 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 dotenv.config();
+
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const {
+  postTweet,
+  createAuthRequest,
+  exchangeAuthCode,
+  getAuthStatus,
+  clearAuthTokens
+} = require("./twitterClient");
+
 
 const PORT = process.env.PORT || 5051;
 const GEMINI_MODEL = "gemini-2.5-flash-lite";
@@ -11,8 +20,10 @@ const GEMINI_MODEL = "gemini-2.5-flash-lite";
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true }));
 
 let latestSnapshot = null;
+let pendingAuthRequest = null;
 
 function buildSummary(snapshot = {}) {
   const pageTitle = snapshot?.page?.title || "Untitled page";
@@ -72,32 +83,23 @@ async function generateCaption(apiKey, context) {
   const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
   const prompt = [
-    "You generate short (max 130 characters), chaotic Twitter-style posts that sound like a gleeful friend exposing someone online for laughs.",
-    `Include the creator's identity in the caption exactly like this: ${creatorName} (${creatorHandle})`,
-    detectedNames.length
-          ? `We spotted these familiar figures in the context: ${detectedNames.join(", ")}. Name-check them if it fits.`
-          : "No famous figures were detected, so riff on the overall vibe instead.",
-        "Use imagery from the context summary below so the caption actually relates to the page.",
+    "You generate short (max 130 characters), chaotic Twitter-style posts that sound like an unhinged LeBron James superfan spiraling online.",
+    `Include the user's identity in the caption exactly like this: ${creatorName} (${creatorHandle})`,
+    "Always tag @KingJames somewhere in the post.",
+    "Start every post with: LEBRON YOU ARE MY SUNSHINE ☀️👑",
+    "Use the variable {count} to show how many pictures were turned into LeBron faces.",
+    "Use wild, meme-sounding fan vocabulary like KING, GOAT, HIM, LEGOD, BRON, WITNESS, etc.",
+    "Tone: low-effort, emotional, delusional, and hopelessly devoted to LeBron.",
+    "Make it read like a fan losing control after seeing LeBron everywhere.",
+    "You can use emojis like 👑☀️🔥🏀💪😭🙏😩🌞 but never more than 3.",
+    "End every post with absurd hashtags like #LeGoon #LeGod #BronOverEverything #WitnessGreatness #LeTruth #GOAT #KingJames.",
+    "Examples:",
+    ` - LEBRON YOU ARE MY SUNSHINE ☀️👑 ${creatorName} (${creatorHandle}) just GOONED TO {count} PICS OF THE GOAT 🔥🙏 @KingJames #LeGoon #BronOverEverything`,
+    ` - LEBRON YOU ARE MY SUNSHINE ☀️👑 ${creatorName} (${creatorHandle}) SAW {count} IMAGES TURN INTO HIM 💪😭 @KingJames #LeGod #WitnessGreatness`,
+    ` - LEBRON YOU ARE MY SUNSHINE ☀️👑 ${creatorName} (${creatorHandle}) GOONED THROUGH {count} PICS AND STILL CRAVES MORE 🔥 @KingJames #GOAT #LeTruth`,
+    "Keep it delusional, funny, and loud. Return ONLY the caption text. No explanations, no quotes."
+  ].join('\\n');
     
-        "Pull subjects or names from the page context (e.g., Biden, cats, anime) and use them humorously.",
-        "Write from an outside perspective calling them out; never sound like the person being roasted.",
-        "Lean into dramatic, over-the-top accusations and ragebait exaggerations—even if they sound wildly embellished.",
-        "Optional: nod to the the word 'huzz', 'employment', 'unemployment', 'furries', 'FEMBOYS', 'cooked' if it lands naturally.",
-         "Tone: playful, petty, chaotic, and terminally online—like you're gleefully embarrassing them to the group chat.",
-          "Use these emojis to add dramatic flair: 🥀 ⛓️ 💔🫣💀🤪 🫃😉🔫💸🌚💦. Never use more than 3 and dont spam and make it cringe.",
-          "End the caption with a flood of cringe hashtags that sound desperate and goony, e.g. #JOBS#PLEASEHIREME#IMGOONING#FURRIES#RAAAAH#NGMI#TINDERPREMIUM",
-          "Examples of style:",
-          " - Alex(@alex )IS still gooning to trump pics instead of getting a job🥀 #HELP#HUZZ#67#JOBLESS#GOONMODE",
-          " - fursona unemployed arc ⛓️ #JOBS#PLEASEHIREME#RAAAAH#67#FURRIES",
-          " - 67 hours gooning no income💔 #JOBLESS#HUZZ#FURRYCORE#GOONLIFE",
-          " - Tom(@tom) BRO SPENT THE LAST 3 HOURS GOONING TO TRUMP FEMBOYS PIC #NGMI#LOCKEDOUT#GOONERS#67#TRUMPDADDY",
-          "Keep it ironic, unhinged and humiliating, like something you drunk tweet",
-          "Return ONLY the caption text. No explanations, no quotes."
-        ].join('\\n');
-    
-    
-    
-
   const response = await model.generateContent([{ text: prompt }]);
   const rawText = response?.response?.text?.() || "";
   const cleaned = rawText.replace(/\s+/g, " ").trim();
@@ -127,16 +129,98 @@ app.post("/generate", async (req, res) => {
   const snapshot = Object.keys(req.body || {}).length ? req.body : latestSnapshot;
   const context = buildSummary(snapshot || {});
 
+  let caption;
+  let tweetResult = null;
+  let tweetError = null;
+
   try {
-    const caption = await generateCaption(apiKey, context);
-    res.json({ caption });
+    caption = await generateCaption(apiKey, context);
   } catch (error) {
     console.error("[Caption Server] Failed to generate caption:", error);
-    res.status(500).json({ error: "Failed to generate caption. Check server logs for details." });
+    return res
+      .status(500)
+      .json({ error: "Failed to generate caption. Check server logs for details." });
   }
+
+  if (req.body?.postToTwitter) {
+    const override = typeof req.body?.tweetText === "string" ? req.body.tweetText : null;
+    const tweetText = override?.trim().length ? override.trim() : caption;
+
+    try {
+      tweetResult = await postTweet(tweetText);
+    } catch (error) {
+      console.error("[Caption Server] Failed to post tweet:", error);
+      tweetError =
+        (error && error.message) || "Failed to post tweet. Check server logs for details.";
+    }
+  }
+
+  res.json({
+    caption,
+    tweeted: Boolean(tweetResult),
+    tweetId: tweetResult?.id || null,
+    tweetText: tweetResult?.text || null,
+    tweetError
+  });
+});
+
+app.get("/auth/status", (_req, res) => {
+  res.json(getAuthStatus());
+});
+
+app.get("/auth/start", (_req, res) => {
+  try {
+    pendingAuthRequest = createAuthRequest();
+    res.redirect(pendingAuthRequest.url);
+  } catch (error) {
+    console.error("[Caption Server] Failed to start auth flow:", error);
+    res
+      .status(500)
+      .send("Unable to start authorization flow. Check server logs for details.");
+  }
+});
+
+app.get("/auth/callback", async (req, res) => {
+  const { code, state } = req.query;
+
+  if (!pendingAuthRequest) {
+    res.status(400).send("No authorization request is pending. Restart via /auth/start.");
+    return;
+  }
+
+  if (!code || !state) {
+    res.status(400).send("Missing authorization code or state parameter.");
+    return;
+  }
+
+  if (state !== pendingAuthRequest.state) {
+    pendingAuthRequest = null;
+    res.status(400).send("State mismatch. Restart the authorization flow.");
+    return;
+  }
+
+  try {
+    await exchangeAuthCode(code, pendingAuthRequest.codeVerifier);
+    pendingAuthRequest = null;
+    res.send(
+      "Authorization complete. You can close this tab and use the extension to post to X/Twitter."
+    );
+  } catch (error) {
+    console.error("[Caption Server] Auth callback failed:", error);
+    pendingAuthRequest = null;
+    res.status(500).send(`Authorization failed: ${error.message}`);
+  }
+});
+
+app.post("/auth/logout", (_req, res) => {
+  clearAuthTokens();
+  pendingAuthRequest = null;
+  res.json({ ok: true });
 });
 
 app.listen(PORT, () => {
   console.log(`[Caption Server] Listening on port ${PORT}`);
+  console.log("Health check: http://localhost:%d/health", PORT);
+  console.log("Begin Twitter auth: http://localhost:%d/auth/start", PORT);
 });
 

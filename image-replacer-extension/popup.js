@@ -1,8 +1,10 @@
 const toggleButton = document.getElementById("toggle");
 const generateButton = document.getElementById("generate");
+const tweetButton = document.getElementById("generateTweet");
 const copyButton = document.getElementById("copy");
 const captionField = document.getElementById("caption");
 const statusEl = document.getElementById("status");
+const tweetInfoEl = document.getElementById("tweetInfo");
 const nameInput = document.getElementById("name");
 const handleInput = document.getElementById("handle");
 const fadeImagesButton = document.getElementById("fadeImages");
@@ -28,6 +30,10 @@ function setStatus(message = "", isError = false) {
   if (!statusEl) return;
   statusEl.textContent = message;
   statusEl.classList.toggle("error", Boolean(isError));
+  if (tweetInfoEl) {
+    tweetInfoEl.style.display = "none";
+    tweetInfoEl.textContent = "";
+  }
 }
 
 function getActiveTab() {
@@ -38,10 +44,15 @@ function getActiveTab() {
   });
 }
 
-function enableGenerateButton() {
-  if (!generateButton) return;
-  generateButton.disabled = false;
-  generateButton.textContent = "Generate caption";
+function resetActionButtons() {
+  if (generateButton) {
+    generateButton.disabled = false;
+    generateButton.textContent = "Generate caption";
+  }
+  if (tweetButton) {
+    tweetButton.disabled = false;
+    tweetButton.textContent = "Generate & Tweet";
+  }
 }
 
 function sanitizeHandle(rawHandle = "") {
@@ -75,7 +86,7 @@ chrome.storage.sync.get({ enabled: true, creatorName: "", creatorHandle: "", fad
   updateFadeImagesButton(fadeImagesToLeBron);
   
   toggleButton.disabled = false;
-  enableGenerateButton();
+  resetActionButtons();
 
   if (nameInput) nameInput.value = result.creatorName || "";
   if (handleInput) handleInput.value = sanitizeHandle(result.creatorHandle || "");
@@ -125,17 +136,35 @@ cameraButton.addEventListener("click", async () => {
   }
 });
 
-function requestCaption() {
-  if (!generateButton) return;
+function requestCaption({ postToTwitter = false } = {}) {
+  const activeButton = postToTwitter ? tweetButton : generateButton;
+  const secondaryButton = postToTwitter ? generateButton : tweetButton;
 
-  generateButton.disabled = true;
-  generateButton.textContent = "Generating...";
-  setStatus("Summoning a 67/goon caption...");
+  if (activeButton) {
+    activeButton.disabled = true;
+    activeButton.textContent = postToTwitter ? "Generating & tweeting..." : "Generating...";
+  }
+  if (secondaryButton) secondaryButton.disabled = true;
+
+  setStatus(
+    postToTwitter
+      ? "Summoning a caption and pushing it to X/Twitter..."
+      : "Summoning a 67/goon caption..."
+  );
 
   const profile = getProfilePayload();
+  const payload = { profile };
 
-  chrome.runtime.sendMessage({ type: "generate-caption", payload: { profile } }, (response) => {
-    enableGenerateButton();
+  if (postToTwitter) {
+    payload.postToTwitter = true;
+    const customTweet = captionField.value.trim();
+    if (customTweet.length) {
+      payload.tweetText = customTweet.slice(0, 280);
+    }
+  }
+
+  chrome.runtime.sendMessage({ type: "generate-caption", payload }, (response) => {
+    resetActionButtons();
 
     if (chrome.runtime.lastError) {
       setStatus("Failed to reach local caption server. Is it running?", true);
@@ -148,13 +177,31 @@ function requestCaption() {
       return;
     }
 
-    captionField.value = response.caption;
+    if (response.caption) {
+      captionField.value = response.caption;
+    }
     copyButton.disabled = !response.caption;
-    setStatus("Caption ready.");
+
+    if (postToTwitter) {
+      if (response.tweeted) {
+        setStatus("Caption posted to X/Twitter successfully!");
+        if (tweetInfoEl && response.tweetText) {
+          tweetInfoEl.textContent = response.tweetText;
+          tweetInfoEl.style.display = "block";
+        }
+      } else if (response.tweetError) {
+        setStatus(`Caption ready, but tweeting failed: ${response.tweetError}`, true);
+      } else {
+        setStatus("Caption ready, but tweet was not sent.", true);
+      }
+    } else {
+      setStatus("Caption ready.");
+    }
   });
 }
 
-generateButton?.addEventListener("click", requestCaption);
+generateButton?.addEventListener("click", () => requestCaption({ postToTwitter: false }));
+tweetButton?.addEventListener("click", () => requestCaption({ postToTwitter: true }));
 
 copyButton?.addEventListener("click", async () => {
   const caption = captionField.value.trim();
